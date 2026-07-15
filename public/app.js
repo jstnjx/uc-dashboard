@@ -370,6 +370,9 @@ const app = document.querySelector('#app');
 const drawerRoot = document.querySelector('#drawer-root');
 const modalRoot = document.querySelector('#modal-root');
 const toastRegion = document.querySelector('#toast-region');
+const iconLibraryRoot = document.createElement('div');
+iconLibraryRoot.id = 'unfolded-tools-icon-library-root';
+document.body.append(iconLibraryRoot);
 const frozenDashboardRoot = document.createElement('div');
 frozenDashboardRoot.id = 'frozen-dashboard-root';
 frozenDashboardRoot.setAttribute('aria-hidden', 'true');
@@ -403,7 +406,10 @@ const state = {
     chargingGated: false,
     dashboardPort: 11080,
     onRemote: false,
-    environmentOverrides: {}
+    environmentOverrides: {},
+    unfoldedToolsApiKeyConfigured: false,
+    unfoldedToolsCacheSelected: true,
+    unfoldedToolsIncludeInBackup: true
   },
   saveTimer: null,
   editorDirty: false,
@@ -467,7 +473,8 @@ const state = {
   sharedDashboardGeometry: null,
   dashboardShellCache: new Map(),
   backupImportCandidate: null,
-  backupImportBusy: false
+  backupImportBusy: false,
+  unfoldedToolsPicker: { open: false, category: 'apps', country: '', query: '', page: 1, pages: 1, total: 0, icons: [], countries: [], loading: false, error: '', target: null, selectingId: '' }
 };
 
 const DASHBOARD_CLIPBOARD_STORAGE_KEY = 'uc-dashboard-clipboard-v1';
@@ -636,7 +643,7 @@ function iconChoiceField(name, value = '', label = 'Icon', { fallback = 'dashboa
   const selected = String(value || '').trim();
   const shown = selected || fallback;
   const preview = renderChosenIcon(shown, compact ? 26 : 34, fallback);
-  return `<div class="field reusable-icon-choice ${compact ? 'compact' : ''}" data-icon-choice data-icon-target="${escapeHtml(name)}" data-icon-fallback="${escapeHtml(fallback)}"><label>${escapeHtml(label)}</label><div class="reusable-icon-choice-row"><span class="reusable-icon-choice-preview" data-icon-choice-preview>${preview}</span><input class="settings-input" name="${escapeHtml(name)}" value="${escapeHtml(selected)}" placeholder="${escapeHtml(fallback)}" ${compact ? '' : 'readonly'}><button type="button" class="pill-button" data-action="toggle-material-icon-picker">${materialSymbol('apps',18)} Choose</button><label class="icon-upload-button" title="Upload PNG or SVG">${materialSymbol('upload',18)}<input type="file" data-generic-icon-upload accept="image/png,image/svg+xml,image/webp"></label>${allowEmpty ? `<button type="button" class="icon-choice-clear" data-action="clear-icon-choice" title="Clear icon">${materialSymbol('close',18)}</button>` : ''}</div><div class="material-icon-picker" data-material-icon-picker hidden><input class="settings-input" type="search" data-material-icon-search placeholder="Search icons"><div data-material-icon-results>${renderMaterialSymbolResults('')}</div></div><small>Choose a bundled Material Symbol or upload an icon image. Uploaded images are stored in the dashboard configuration.</small></div>`;
+  return `<div class="field reusable-icon-choice ${compact ? 'compact' : ''}" data-icon-choice data-icon-target="${escapeHtml(name)}" data-icon-fallback="${escapeHtml(fallback)}"><label>${escapeHtml(label)}</label><div class="reusable-icon-choice-row"><span class="reusable-icon-choice-preview" data-icon-choice-preview>${preview}</span><input class="settings-input" name="${escapeHtml(name)}" value="${escapeHtml(selected)}" placeholder="${escapeHtml(fallback)}" ${compact ? '' : 'readonly'}><button type="button" class="pill-button" data-action="toggle-material-icon-picker">${materialSymbol('apps',18)} Material</button><button type="button" class="pill-button unfolded-tools-picker-open" data-action="open-unfolded-tools-picker">${materialSymbol('language',18)} unfolded.tools</button><label class="icon-upload-button" title="Upload PNG or SVG">${materialSymbol('upload',18)}<input type="file" data-generic-icon-upload accept="image/png,image/svg+xml,image/webp"></label>${allowEmpty ? `<button type="button" class="icon-choice-clear" data-action="clear-icon-choice" title="Clear icon">${materialSymbol('close',18)}</button>` : ''}</div><div class="material-icon-picker" data-material-icon-picker hidden><input class="settings-input" type="search" data-material-icon-search placeholder="Search icons"><div data-material-icon-results>${renderMaterialSymbolResults('')}</div></div><small>Choose a bundled Material Symbol, browse unfolded.tools, or upload an icon image. Selected unfolded.tools icons can be cached locally for offline use.</small></div>`;
 }
 
 function updateIconChoicePreview(choice) {
@@ -644,6 +651,159 @@ function updateIconChoicePreview(choice) {
   const input = choice.querySelector('[name]');
   const preview = choice.querySelector('[data-icon-choice-preview]');
   if (preview) preview.innerHTML = renderChosenIcon(input?.value || '', choice.classList.contains('compact') ? 26 : 34, choice.dataset.iconFallback || 'dashboard');
+}
+
+
+const UNFOLDED_TOOLS_ICON_CATEGORIES = [
+  ['apps', 'App Icons'],
+  ['tv-apps', 'TV App Icons'],
+  ['community', 'Community Icons'],
+  ['tv-logos', 'TV Channel Logos']
+];
+
+function unfoldedToolsCategoryLabel(category) {
+  return UNFOLDED_TOOLS_ICON_CATEGORIES.find(([value]) => value === category)?.[1] || category;
+}
+
+function formatByteSize(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderUnfoldedToolsIconLibrary() {
+  const picker = state.unfoldedToolsPicker;
+  if (!picker.open) { iconLibraryRoot.innerHTML = ''; return; }
+  const configured = Boolean(state.settings.unfoldedToolsApiKeyConfigured);
+  const countryOptions = picker.countries.map((entry) => `<option value="${escapeHtml(entry.country)}" ${picker.country === entry.country ? 'selected' : ''}>${escapeHtml(entry.country.replaceAll('-', ' '))} (${entry.iconCount})</option>`).join('');
+  const results = picker.loading
+    ? `<div class="unfolded-tools-library-state">${materialSymbol('progress_activity', 30)}<strong>Loading icon library…</strong></div>`
+    : picker.error
+      ? `<div class="unfolded-tools-library-state error">${materialSymbol('error', 30)}<strong>${escapeHtml(picker.error)}</strong><button type="button" class="pill-button" data-unfolded-tools-action="retry">${materialSymbol('refresh',18)} Retry</button></div>`
+      : !picker.icons.length
+        ? `<div class="unfolded-tools-library-state">${materialSymbol('search_off', 30)}<strong>No matching icons</strong></div>`
+        : `<div class="unfolded-tools-icon-grid">${picker.icons.map((entry) => `<button type="button" class="unfolded-tools-icon-card" data-unfolded-tools-action="select" data-icon-id="${escapeHtml(entry.id)}" data-icon-name="${escapeHtml(entry.name)}" ${picker.selectingId ? 'disabled' : ''}><span><img src="${escapeHtml(entry.thumbnailUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span><strong>${escapeHtml(entry.name)}</strong>${picker.selectingId === entry.id ? `<small>${materialSymbol('progress_activity',15)} Saving…</small>` : `<small>${escapeHtml(unfoldedToolsCategoryLabel(entry.category))}</small>`}</button>`).join('')}</div>`;
+  const pagination = picker.pages > 1 ? `<div class="unfolded-tools-pagination"><button type="button" data-unfolded-tools-action="page" data-page="${picker.page - 1}" ${picker.page <= 1 || picker.loading ? 'disabled' : ''}>${materialSymbol('chevron_left',20)} Previous</button><span>${picker.page} / ${picker.pages} · ${picker.total} icons</span><button type="button" data-unfolded-tools-action="page" data-page="${picker.page + 1}" ${picker.page >= picker.pages || picker.loading ? 'disabled' : ''}>Next ${materialSymbol('chevron_right',20)}</button></div>` : `<div class="unfolded-tools-pagination"><span>${picker.total} icons</span></div>`;
+  iconLibraryRoot.innerHTML = localizedDashboardMarkup(`<div class="unfolded-tools-library-backdrop" data-unfolded-tools-action="close"></div><section class="unfolded-tools-library-dialog" role="dialog" aria-modal="true" aria-label="unfolded.tools icon library"><header><div><span class="unfolded-tools-brand-mark">u</span><div><h2>unfolded.tools Icon Library</h2><p>Select an icon and add it directly to UC Dashboard.</p></div></div><button type="button" data-unfolded-tools-action="close" title="Close">${materialSymbol('close',22)}</button></header>${configured ? `<nav class="unfolded-tools-category-tabs">${UNFOLDED_TOOLS_ICON_CATEGORIES.map(([value,label]) => `<button type="button" data-unfolded-tools-action="category" data-category="${value}" class="${picker.category === value ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav><div class="unfolded-tools-library-toolbar"><label>${materialSymbol('search',19)}<input type="search" data-unfolded-tools-search value="${escapeHtml(picker.query)}" placeholder="Search this library" autocomplete="off"></label>${picker.category === 'tv-logos' ? `<select class="settings-input" data-unfolded-tools-country aria-label="TV logo country">${countryOptions}</select>` : ''}</div><div class="unfolded-tools-library-results">${results}</div>${pagination}<footer><span>Selected icons are ${state.settings.unfoldedToolsCacheSelected !== false ? 'cached locally for offline use' : 'linked from unfolded.tools'}.</span><a href="https://unfolded.tools" target="_blank" rel="noopener noreferrer">unfolded.tools</a></footer>` : `<div class="unfolded-tools-library-state missing-key">${materialSymbol('key',34)}<strong>Connect unfolded.tools first</strong><p>Add an API key under Settings → Icons, save the settings, and reopen the library.</p><button type="button" class="pill-button" data-unfolded-tools-action="close">Close</button></div>`}</section>`);
+}
+
+async function loadUnfoldedToolsCountries() {
+  const picker = state.unfoldedToolsPicker;
+  if (picker.countries.length) return;
+  const response = await fetch('/api/unfolded-tools/countries', { cache: 'no-store' });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `Country request failed (${response.status})`);
+  picker.countries = Array.isArray(result.countries) ? result.countries : [];
+  if (!picker.country || !picker.countries.some((entry) => entry.country === picker.country)) {
+    picker.country = picker.countries.find((entry) => entry.country === 'germany')?.country || picker.countries[0]?.country || '';
+  }
+}
+
+async function loadUnfoldedToolsIcons() {
+  const picker = state.unfoldedToolsPicker;
+  if (!picker.open || !state.settings.unfoldedToolsApiKeyConfigured) return;
+  picker.loading = true;
+  picker.error = '';
+  renderUnfoldedToolsIconLibrary();
+  try {
+    if (picker.category === 'tv-logos') await loadUnfoldedToolsCountries();
+    const params = new URLSearchParams({ category: picker.category, query: picker.query, page: String(picker.page), limit: '48' });
+    if (picker.category === 'tv-logos') params.set('country', picker.country);
+    const response = await fetch(`/api/unfolded-tools/icons?${params}`, { cache: 'no-store' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Icon request failed (${response.status})`);
+    picker.icons = Array.isArray(result.icons) ? result.icons : [];
+    picker.total = Number(result.total) || 0;
+    picker.page = Number(result.page) || 1;
+    picker.pages = Number(result.pages) || 1;
+  } catch (error) {
+    picker.icons = [];
+    picker.total = 0;
+    picker.pages = 1;
+    picker.error = error.message;
+  } finally {
+    picker.loading = false;
+    renderUnfoldedToolsIconLibrary();
+    iconLibraryRoot.querySelector('[data-unfolded-tools-search]')?.focus();
+  }
+}
+
+function openUnfoldedToolsIconLibrary(actionNode) {
+  const choice = actionNode.closest('[data-icon-choice]');
+  const form = actionNode.closest('[data-widget-settings-form]');
+  state.unfoldedToolsPicker = {
+    ...state.unfoldedToolsPicker,
+    open: true,
+    query: '',
+    page: 1,
+    icons: [],
+    total: 0,
+    pages: 1,
+    loading: false,
+    error: '',
+    selectingId: '',
+    target: choice ? { kind: 'generic', choice, input: choice.querySelector('[name]') } : { kind: 'widget', form }
+  };
+  renderUnfoldedToolsIconLibrary();
+  void loadUnfoldedToolsIcons();
+}
+
+function closeUnfoldedToolsIconLibrary() {
+  state.unfoldedToolsPicker.open = false;
+  state.unfoldedToolsPicker.target = null;
+  state.unfoldedToolsPicker.selectingId = '';
+  renderUnfoldedToolsIconLibrary();
+}
+
+async function selectUnfoldedToolsIcon(button) {
+  const picker = state.unfoldedToolsPicker;
+  if (picker.selectingId) return;
+  const id = String(button.dataset.iconId || '');
+  if (!id) return;
+  picker.selectingId = id;
+  renderUnfoldedToolsIconLibrary();
+  try {
+    const response = await fetch('/api/unfolded-tools/cache', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: picker.category, country: picker.country, id })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Icon selection failed (${response.status})`);
+    const target = picker.target;
+    if (result.asset?.fileName) {
+      state.config.iconAssets ||= {};
+      state.config.iconAssets[result.asset.fileName] = result.asset;
+    }
+    if (target?.kind === 'generic' && target.input?.isConnected) {
+      target.input.value = result.url;
+      target.input.dispatchEvent(new Event('input', { bubbles: true }));
+      updateIconChoicePreview(target.choice);
+    } else if (target?.kind === 'widget' && target.form?.isConnected) {
+      const form = target.form;
+      const mode = form.querySelector('[name="iconMode"]');
+      const url = form.querySelector('[name="unfoldedToolsIconUrl"]');
+      const asset = form.querySelector('[name="unfoldedToolsIconAsset"]');
+      if (mode) mode.value = 'unfolded_tools';
+      if (url) url.value = result.url;
+      if (asset) asset.value = JSON.stringify(result.asset || {});
+      form.querySelectorAll('[data-uploaded-icon-preview],[data-material-icon-preview]').forEach((node) => { node.hidden = true; });
+      const preview = form.querySelector('[data-unfolded-tools-icon-preview]');
+      if (preview) {
+        preview.hidden = false;
+        preview.innerHTML = `<img src="${escapeHtml(result.url)}" alt=""><span>${escapeHtml(result.asset?.name || button.dataset.iconName || 'unfolded.tools icon')}</span>`;
+      }
+      scheduleWidgetEditorPreview(form);
+    }
+    persistConfig();
+    closeUnfoldedToolsIconLibrary();
+    toast(translateDashboardText(`Added ${result.asset?.name || button.dataset.iconName || 'icon'} from unfolded.tools`));
+  } catch (error) {
+    picker.error = error.message;
+    picker.selectingId = '';
+    renderUnfoldedToolsIconLibrary();
+  }
 }
 
 function localName(name, fallback = 'Unnamed entity') {
@@ -710,6 +870,10 @@ function translateDashboardText(value, variables = {}) {
       [/^backup is invalid: (.+)$/i, 'backup_invalid_reason', (match) => ({ reason:match[1] })],
       [/^(\d+) entities$/i, 'entity_count', (match) => ({ count:match[1] })],
       [/^(\d+) alerts?$/i, 'alert_count', (match) => ({ count:match[1] })],
+      [/^(\d+) icons?$/i, 'icon_count', (match) => ({ count:match[1] })],
+      [/^(\d+) \/ (\d+) · (\d+) icons?$/i, 'icon_page_summary', (match) => ({ page:match[1], pages:match[2], count:match[3] })],
+      [/^connected\. (\d+) app icons are currently available\.$/i, 'connected_app_icons_available', (match) => ({ count:match[1] })],
+      [/^added (.+) from unfolded\.tools$/i, 'added_icon_from_unfolded_tools', (match) => ({ name:match[1] })],
       [/^page (\d+) of (\d+)$/i, 'page_of', (match) => ({ page:match[1], pages:match[2] })],
       [/^connected to (.+)$/i, 'connected_to', (match) => ({ name:match[1] })],
       [/^this dashboard is locked\. hint: (.+)$/i, 'dashboard_locked_with_hint', (match) => ({ hint:match[1] })],
@@ -1380,6 +1544,7 @@ function normalizeConfig(config) {
   const migrateDashboardGrid = sourceVersion < 37;
   normalized.version = 37;
   normalized.backgroundPresets = Array.isArray(normalized.backgroundPresets) ? normalized.backgroundPresets.slice(0, 40).map(normalizeSavedBackgroundPreset) : [];
+  normalized.iconAssets = normalized.iconAssets && typeof normalized.iconAssets === 'object' && !Array.isArray(normalized.iconAssets) ? normalized.iconAssets : {};
   normalized.widgetPresets = Array.isArray(normalized.widgetPresets) ? normalized.widgetPresets.slice(0,100).map((entry)=>({ id:String(entry?.id||uid('preset')), name:String(entry?.name||'Preset'), template:entry?.template&&typeof entry.template==='object'?entry.template:null })).filter((entry)=>entry.template) : [];
   normalized.widgetMasters = Array.isArray(normalized.widgetMasters) ? normalized.widgetMasters.slice(0,100).map((entry)=>({ id:String(entry?.id||uid('component')), name:String(entry?.name||'Component'), template:entry?.template&&typeof entry.template==='object'?entry.template:null, updatedAt:Number(entry?.updatedAt)||Date.now() })).filter((entry)=>entry.template) : [];
   normalized.widgetDefaults = normalized.widgetDefaults && typeof normalized.widgetDefaults === 'object' ? normalized.widgetDefaults : {};
@@ -1454,10 +1619,12 @@ function normalizeConfig(config) {
     item.settings.customCss = typeof item.settings.customCss === 'string' ? item.settings.customCss : '';
     item.settings.customJs = typeof item.settings.customJs === 'string' ? item.settings.customJs : '';
     item.settings.customCodeScope = item.settings.customCodeScope === 'dashboard' ? 'dashboard' : 'widget';
-    item.settings.iconMode = ['default', 'material', 'upload'].includes(item.settings.iconMode) ? item.settings.iconMode : 'default';
+    item.settings.iconMode = ['default', 'material', 'upload', 'unfolded_tools'].includes(item.settings.iconMode) ? item.settings.iconMode : 'default';
     item.settings.materialIcon = typeof item.settings.materialIcon === 'string' ? item.settings.materialIcon : '';
     item.settings.customIconData = typeof item.settings.customIconData === 'string' ? item.settings.customIconData : '';
     item.settings.customIconName = typeof item.settings.customIconName === 'string' ? item.settings.customIconName : '';
+    item.settings.unfoldedToolsIconUrl = typeof item.settings.unfoldedToolsIconUrl === 'string' ? item.settings.unfoldedToolsIconUrl : '';
+    item.settings.unfoldedToolsIconAsset = item.settings.unfoldedToolsIconAsset && typeof item.settings.unfoldedToolsIconAsset === 'object' ? item.settings.unfoldedToolsIconAsset : null;
     item.settings.elementLayout = item.settings.elementLayout && typeof item.settings.elementLayout === 'object' && !Array.isArray(item.settings.elementLayout) ? item.settings.elementLayout : {};
     for (const value of Object.values(item.settings.elementLayout)) if (value && typeof value === 'object') { value.hidden = Boolean(value.hidden); value.scale = Math.max(25, Math.min(200, Number(value.scale) || 100)); }
     if (item.kind === 'system' && item.widgetType === 'icon_button') item.settings.iconSize = String(Math.max(16, Math.min(160, Number(item.settings.iconSize) || 64)));
@@ -2093,6 +2260,7 @@ function renderWidgetIcon(item, fallbackName, size = 22, className = '') {
   if (settings.iconMode === 'upload' && /^data:image\/(?:png|svg\+xml)(?:;|,)/i.test(settings.customIconData || '')) {
     return `<img class="widget-icon-image ${escapeHtml(className)}" src="${escapeHtml(settings.customIconData)}" alt="" style="width:${Number(size) || 22}px;height:${Number(size) || 22}px">`;
   }
+  if (settings.iconMode === 'unfolded_tools' && chosenIconIsImage(settings.unfoldedToolsIconUrl)) return `<img class="widget-icon-image ${escapeHtml(className)}" src="${escapeHtml(settings.unfoldedToolsIconUrl)}" alt="" style="width:${Number(size) || 22}px;height:${Number(size) || 22}px">`;
   if (settings.iconMode === 'material' && settings.materialIcon) return materialSymbol(settings.materialIcon, size, className);
   return icon(fallbackName, size);
 }
@@ -2146,10 +2314,12 @@ async function widgetAppearanceFromForm(data, existing = {}) {
     showWidgetBackground: data.get('showWidgetBackground') === 'on',
     showWidgetBorder: data.get('showWidgetBorder') === 'on',
     textOverflow: ['scroll', 'wrap', 'truncate'].includes(textOverflow) ? textOverflow : 'scroll',
-    iconMode: ['default', 'material', 'upload'].includes(iconMode) ? iconMode : 'default',
+    iconMode: ['default', 'material', 'upload', 'unfolded_tools'].includes(iconMode) ? iconMode : 'default',
     materialIcon: String(data.get('materialIcon') || existing.materialIcon || '').trim(),
     customIconData: String(existing.customIconData || ''),
     customIconName: String(existing.customIconName || ''),
+    unfoldedToolsIconUrl: String(data.get('unfoldedToolsIconUrl') || existing.unfoldedToolsIconUrl || ''),
+    unfoldedToolsIconAsset: existing.unfoldedToolsIconAsset && typeof existing.unfoldedToolsIconAsset === 'object' ? structuredClone(existing.unfoldedToolsIconAsset) : null,
     customHtmlMode: ['append', 'prepend', 'replace'].includes(String(data.get('customHtmlMode') || existing.customHtmlMode || 'append')) ? String(data.get('customHtmlMode') || existing.customHtmlMode || 'append') : 'append',
     customCodeScope: data.get('customCodeGlobal') === 'on' ? 'dashboard' : 'widget',
     customHtml: String(data.get('customHtml') ?? existing.customHtml ?? ''),
@@ -2170,8 +2340,11 @@ async function widgetAppearanceFromForm(data, existing = {}) {
     next.customIconName = iconFile.name || 'Uploaded icon';
     next.iconMode = 'upload';
   }
+  const unfoldedToolsAssetValue = String(data.get('unfoldedToolsIconAsset') || '').trim();
+  if (unfoldedToolsAssetValue) { try { next.unfoldedToolsIconAsset = JSON.parse(unfoldedToolsAssetValue); } catch {} }
   if (next.iconMode === 'material' && !next.materialIcon) next.iconMode = 'default';
   if (next.iconMode === 'upload' && !next.customIconData) next.iconMode = 'default';
+  if (next.iconMode === 'unfolded_tools' && !next.unfoldedToolsIconUrl) next.iconMode = 'default';
   return next;
 }
 
@@ -2312,14 +2485,14 @@ function getMediaBrowserContext(itemId) {
 
 function createEntityWidget(entity) {
   const size = DEFAULT_SIZES[entity.entity_type] || { w: 3, h: 2 };
-  return { id: uid('widget'), kind: 'entity', entityId: entity.entity_id, entityType: entity.entity_type, x: 0, y: 0, w: size.w, h: size.h, settings: { textOverflow: 'scroll', iconMode: 'default', materialIcon: '', customIconData: '', customIconName: '', customHtmlMode: 'append', customHtml: '', customCss: '', customJs: '', elements: { ...DEFAULT_ELEMENTS[entity.entity_type], ...(state.config.widgetDefaults?.[entity.entity_type] || {}) } }, snapshot: structuredClone(entity) };
+  return { id: uid('widget'), kind: 'entity', entityId: entity.entity_id, entityType: entity.entity_type, x: 0, y: 0, w: size.w, h: size.h, settings: { textOverflow: 'scroll', iconMode: 'default', materialIcon: '', customIconData: '', customIconName: '', unfoldedToolsIconUrl: '', unfoldedToolsIconAsset: null, customHtmlMode: 'append', customHtml: '', customCss: '', customJs: '', elements: { ...DEFAULT_ELEMENTS[entity.entity_type], ...(state.config.widgetDefaults?.[entity.entity_type] || {}) } }, snapshot: structuredClone(entity) };
 }
 
 function createSystemWidget(type) {
   const definition = SYSTEM_WIDGETS[type];
   if (!definition) return null;
   const size = DEFAULT_SIZES[type] || { w: 4, h: 2 };
-  return { id: uid('widget'), kind: 'system', widgetType: type, x: 0, y: 0, w: size.w, h: size.h, settings: { textOverflow: 'scroll', iconMode: 'default', materialIcon: '', customIconData: '', customIconName: '', customHtmlMode: 'append', customHtml: '', customCss: '', customJs: '', ...structuredClone(definition.settings) } };
+  return { id: uid('widget'), kind: 'system', widgetType: type, x: 0, y: 0, w: size.w, h: size.h, settings: { textOverflow: 'scroll', iconMode: 'default', materialIcon: '', customIconData: '', customIconName: '', unfoldedToolsIconUrl: '', unfoldedToolsIconAsset: null, customHtmlMode: 'append', customHtml: '', customCss: '', customJs: '', ...structuredClone(definition.settings) } };
 }
 
 function nestedWidgetAddControls(containerItem, { includeTabTarget = false } = {}) {
@@ -5830,7 +6003,7 @@ function updateBackupImportControls(form) {
     return;
   }
   preview.className = 'backup-import-preview ready';
-  preview.innerHTML = `${materialSymbol('verified',28)}<div><strong>${escapeHtml(candidate.fileName)}</strong><small>${escapeHtml(translateDashboardText('dashboard_count',{count:candidate.dashboards}))} · ${escapeHtml(translateDashboardText('widget_count',{count:candidate.widgets}))} · ${escapeHtml(translateDashboardText('schema_version',{version:candidate.schemaVersion || translateDashboardText('unknown')}))}</small><small>${escapeHtml(translateDashboardText('created_at',{date:candidate.exportedAt}))}${candidate.applicationVersion ? ` · UC Dashboard ${escapeHtml(candidate.applicationVersion)}` : ''}</small><small>${escapeHtml(translateDashboardText(candidate.hasSettings ? 'Includes portable integration settings. Core API credentials are never included.' : 'Dashboard configuration only.'))}</small></div>`;
+  preview.innerHTML = `${materialSymbol('verified',28)}<div><strong>${escapeHtml(candidate.fileName)}</strong><small>${escapeHtml(translateDashboardText('dashboard_count',{count:candidate.dashboards}))} · ${escapeHtml(translateDashboardText('widget_count',{count:candidate.widgets}))} · ${escapeHtml(translateDashboardText('schema_version',{version:candidate.schemaVersion || translateDashboardText('unknown')}))}${candidate.iconAssets ? ` · ${escapeHtml(translateDashboardText('cached_icon_count',{count:candidate.iconAssets}))}` : ''}</small><small>${escapeHtml(translateDashboardText('created_at',{date:candidate.exportedAt}))}${candidate.applicationVersion ? ` · UC Dashboard ${escapeHtml(candidate.applicationVersion)}` : ''}</small><small>${escapeHtml(translateDashboardText(candidate.hasSettings ? 'Includes portable integration settings. Core API credentials are never included.' : 'Dashboard configuration only.'))}</small></div>`;
 }
 
 async function inspectDashboardBackupFile(input) {
@@ -5840,8 +6013,8 @@ async function inspectDashboardBackupFile(input) {
   const confirmation = form?.querySelector('[data-backup-import-confirm]');
   if (confirmation) confirmation.checked = false;
   if (!file) { updateBackupImportControls(form); return; }
-  if (file.size > 32 * 1024 * 1024) {
-    toast('Backup file must be 32 MB or smaller', 'error');
+  if (file.size > 64 * 1024 * 1024) {
+    toast('Backup file must be 64 MB or smaller', 'error');
     input.value = '';
     updateBackupImportControls(form);
     return;
@@ -5858,7 +6031,8 @@ async function inspectDashboardBackupFile(input) {
       schemaVersion: Number(config.version) || 0,
       exportedAt: backup.exportedAt ? new Date(backup.exportedAt).toLocaleString() : translateDashboardText('Unknown date'),
       applicationVersion: String(backup.application?.version || ''),
-      hasSettings: Boolean(backup.settings && typeof backup.settings === 'object')
+      hasSettings: Boolean(backup.settings && typeof backup.settings === 'object'),
+      iconAssets: Array.isArray(backup.iconAssets) ? backup.iconAssets.length : 0
     };
   } catch (error) {
     input.value = '';
@@ -5938,7 +6112,54 @@ async function importDashboardBackup(form, button) {
 function backupEditorPanel() {
   const dashboards = state.config?.dashboards?.length || 0;
   const widgets = countDashboardConfigWidgets();
-  return `<section class="settings-section"><div class="settings-section-heading"><div><h3>Export backup</h3><p class="muted">Download all dashboards, widgets, presets, backgrounds, localization dictionaries, screensaver rules, navigation, status-bar configuration, and portable integration settings.</p></div><button type="button" class="pill-button primary" data-action="export-dashboard-backup">${materialSymbol('download',18)} Export backup</button></div><div class="backup-current-summary"><span><b>${dashboards}</b><small>Dashboards</small></span><span><b>${widgets}</b><small>Widgets</small></span><span><b>1.11.0</b><small>Application</small></span></div><div class="settings-info-card">${materialSymbol('security',20)}<span>Core API keys, authentication data, session unlocks, and browser-local clipboard contents are never exported.</span></div></section><section class="settings-section backup-import-section"><h3>Import backup</h3><p class="muted">Restoring replaces the complete dashboard configuration. A safety backup of the current configuration is created on the integration before anything is overwritten.</p><div class="field"><label>Backup file</label><input class="settings-input" type="file" accept="application/json,.json" data-dashboard-backup-file></div><div class="backup-import-preview empty" data-backup-import-preview>${materialSymbol('upload_file',28)}<div><strong>Select a UC Dashboard backup</strong><small>The file is checked before the current configuration can be replaced.</small></div></div><label class="checkbox-row"><input type="checkbox" name="restoreBackupSettings" checked> Restore portable integration settings</label><small class="backup-setting-note">Includes dashboard port, charging-gated hosting, reconnect behavior, and log level. Remote Core credentials remain unchanged.</small><label class="checkbox-row backup-import-confirm"><input type="checkbox" data-backup-import-confirm disabled> Replace the current dashboard configuration with this backup</label><button type="button" class="pill-button danger backup-import-button" data-action="import-dashboard-backup" disabled>${materialSymbol('settings_backup_restore',18)} Import backup</button></section>`;
+  return `<section class="settings-section"><div class="settings-section-heading"><div><h3>Export backup</h3><p class="muted">Download all dashboards, widgets, presets, backgrounds, localization dictionaries, screensaver rules, navigation, status-bar configuration, portable integration settings, and locally cached unfolded.tools icons when enabled.</p></div><button type="button" class="pill-button primary" data-action="export-dashboard-backup">${materialSymbol('download',18)} Export backup</button></div><div class="backup-current-summary"><span><b>${dashboards}</b><small>Dashboards</small></span><span><b>${widgets}</b><small>Widgets</small></span><span><b>1.12.1</b><small>Application</small></span></div><div class="settings-info-card">${materialSymbol('security',20)}<span>Core API keys, authentication data, session unlocks, and browser-local clipboard contents are never exported.</span></div></section><section class="settings-section backup-import-section"><h3>Import backup</h3><p class="muted">Restoring replaces the complete dashboard configuration. A safety backup of the current configuration is created on the integration before anything is overwritten.</p><div class="field"><label>Backup file</label><input class="settings-input" type="file" accept="application/json,.json" data-dashboard-backup-file></div><div class="backup-import-preview empty" data-backup-import-preview>${materialSymbol('upload_file',28)}<div><strong>Select a UC Dashboard backup</strong><small>The file is checked before the current configuration can be replaced.</small></div></div><label class="checkbox-row"><input type="checkbox" name="restoreBackupSettings" checked> Restore portable integration settings</label><small class="backup-setting-note">Includes dashboard port, charging-gated hosting, reconnect behavior, log level, and unfolded.tools cache preferences. Remote Core and unfolded.tools API keys remain unchanged.</small><label class="checkbox-row backup-import-confirm"><input type="checkbox" data-backup-import-confirm disabled> Replace the current dashboard configuration with this backup</label><button type="button" class="pill-button danger backup-import-button" data-action="import-dashboard-backup" disabled>${materialSymbol('settings_backup_restore',18)} Import backup</button></section>`;
+}
+
+function iconLibrarySettingsPanel() {
+  const overrides = state.settings.environmentOverrides || {};
+  const configured = Boolean(state.settings.unfoldedToolsApiKeyConfigured);
+  return `<section class="settings-section"><h3>unfolded.tools Icon Library</h3><p class="muted">Connect the public unfolded.tools API to browse app icons, TV app icons, community icons, and country-specific TV channel logos directly inside every dashboard icon picker.</p><div class="connection-summary ${configured ? 'ready' : 'missing'}"><span class="connection-dot"></span><div><strong>${configured ? 'API key configured' : 'API key not configured'}</strong><small>${configured ? 'The key is stored only in the integration settings and is never sent to the browser.' : 'Create an API key at unfolded.tools/settings and enter it below.'}</small></div></div><div class="field"><label>${configured ? 'Replace API key' : 'API key'}</label><input class="settings-input" type="password" name="unfoldedToolsApiKey" autocomplete="new-password" placeholder="uk_…" ${overrides.unfoldedToolsApiKey ? 'disabled' : ''}><small>Leave empty to keep the currently stored key.</small></div>${configured && !overrides.unfoldedToolsApiKey ? '<label class="checkbox-row"><input type="checkbox" name="clearUnfoldedToolsApiKey"> Remove the stored API key</label>' : ''}<div class="settings-action-row"><button type="button" class="pill-button" data-action="test-unfolded-tools-connection">${materialSymbol('network_check',18)} Test connection</button><a class="pill-button" href="https://unfolded.tools/settings" target="_blank" rel="noopener noreferrer">${materialSymbol('key',18)} Get an API key</a></div><div class="settings-info-card" data-unfolded-tools-status>${materialSymbol('info',20)}<span>Save the settings before opening the icon library.</span></div></section><section class="settings-section"><h3>Local icon cache</h3><label class="checkbox-row"><input type="checkbox" name="unfoldedToolsCacheSelected" ${state.settings.unfoldedToolsCacheSelected !== false ? 'checked' : ''} ${overrides.unfoldedToolsCacheSelected ? 'disabled' : ''}> Cache selected icons locally for offline use</label><label class="checkbox-row"><input type="checkbox" name="unfoldedToolsIncludeInBackup" ${state.settings.unfoldedToolsIncludeInBackup !== false ? 'checked' : ''} ${overrides.unfoldedToolsIncludeInBackup ? 'disabled' : ''}> Include cached unfolded.tools icons in dashboard backups</label><p class="muted">Only selected icons are cached. Library thumbnails remain remote and load only when visible.</p><div class="settings-action-row"><button type="button" class="pill-button" data-action="refresh-unfolded-tools-cache">${materialSymbol('refresh',18)} Refresh cache details</button><button type="button" class="pill-button danger" data-action="clear-unfolded-tools-cache">${materialSymbol('delete_sweep',18)} Clear icon cache</button></div><div class="read-only-row"><span>Cached icons</span><code data-unfolded-tools-cache-summary>Loading…</code></div></section>`;
+}
+
+async function refreshUnfoldedToolsSettingsStatus(form = modalRoot.querySelector('[data-settings-form]')) {
+  if (!form) return;
+  const cacheSummary = form.querySelector('[data-unfolded-tools-cache-summary]');
+  try {
+    const response = await fetch('/api/unfolded-tools/status', { cache: 'no-store' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Status request failed (${response.status})`);
+    if (cacheSummary) cacheSummary.textContent = `${result.cache?.icons || 0} · ${formatByteSize(result.cache?.bytes || 0)}`;
+  } catch (error) {
+    if (cacheSummary) cacheSummary.textContent = error.message;
+  }
+}
+
+async function testUnfoldedToolsConnection(form, button) {
+  const status = form?.querySelector('[data-unfolded-tools-status]');
+  const apiKey = String(form?.querySelector('[name="unfoldedToolsApiKey"]')?.value || '').trim();
+  if (button) button.disabled = true;
+  if (status) status.innerHTML = `${materialSymbol('progress_activity',20)}<span>Testing api.unfolded.tools…</span>`;
+  try {
+    const response = await fetch('/api/unfolded-tools/test', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ apiKey }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Connection test failed (${response.status})`);
+    if (status) status.innerHTML = `${materialSymbol('check_circle',20)}<span>Connected. ${result.total || 0} app icons are currently available.</span>`;
+  } catch (error) {
+    if (status) status.innerHTML = `${materialSymbol('error',20)}<span>${escapeHtml(error.message)}</span>`;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function clearUnfoldedToolsCache(form) {
+  if (!window.confirm(translateDashboardText('Clear every locally cached unfolded.tools icon? Existing widgets using cached files may show a missing icon until a replacement is selected.'))) return;
+  const response = await fetch('/api/unfolded-tools/cache', { method:'DELETE' });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) return toast(result.error || `Cache clear failed (${response.status})`, 'error');
+  state.config.iconAssets = {};
+  persistConfig();
+  await refreshUnfoldedToolsSettingsStatus(form);
+  toast(translateDashboardText('unfolded.tools icon cache cleared'));
 }
 
 function renderSettingsEditor() {
@@ -5952,6 +6173,7 @@ function renderSettingsEditor() {
   const panels = {
     connection: `<section class="settings-section"><h3>Remote connection</h3><div class="connection-summary ${provisioned?'ready':'missing'}"><span class="connection-dot"></span><div><strong>${provisioned?'Core API key provisioned':'Core API key not provisioned'}</strong><small>${provisioned?`Created as ${escapeHtml(state.settings.apiKeyName||'UC Dashboard')} · ${escapeHtml(provisionedAt)}`:'Reconfigure the integration on the Remote and provide the web-configurator PIN.'}</small></div></div><div class="read-only-row"><span>Core WebSocket</span><code>${escapeHtml(state.settings.remoteWsUrl||'Not configured')}</code></div><div class="read-only-row"><span>Core REST</span><code>${escapeHtml(state.settings.remoteHttpUrl||'Not configured')}</code></div><button type="button" class="pill-button settings-refresh-button" data-action="refresh-entities">${icon('refresh',18)} Force refresh entities</button><label class="checkbox-row"><input type="checkbox" name="reconnect" ${state.settings.reconnect?'checked':''}> Reconnect automatically</label></section>`,
     display: `<section class="settings-section"><h3>Dashboard and kiosk</h3><div class="field"><label>Dashboard port</label><input name="dashboardPort" type="number" min="1024" max="65535" class="settings-input" value="${escapeHtml(state.settings.dashboardPort)}" ${overrides.dashboardPort?'disabled':''}></div><div class="read-only-row"><span>Kiosk URL</span><code>${escapeHtml(kioskUrl.toString())}</code></div><label class="checkbox-row"><input type="checkbox" name="kioskScaleToFit" ${kiosk.scaleToFit?'checked':''}> Scale the complete dashboard to fit the screen in kiosk mode</label><label class="checkbox-row"><input type="checkbox" name="kioskAllowUpscale" ${kiosk.allowUpscale?'checked':''}> Allow kiosk scaling above 100%</label><div class="field"><label>Scaled dashboard width</label><select class="settings-input" name="kioskWidthMode"><option value="fill" ${(kiosk.widthMode||'fill')==='fill'?'selected':''}>Reflow at native size and scroll vertically</option><option value="center" ${kiosk.widthMode==='center'?'selected':''}>Keep fixed width and center it</option><option value="left" ${kiosk.widthMode==='left'?'selected':''}>Keep fixed width and left-align it</option></select><small>Reflow keeps widgets readable at the responsive viewport width and scrolls when needed. Center and left fit the complete fixed-width dashboard.</small></div><div class="field"><label>Kiosk fit padding</label><input class="settings-input" type="number" min="0" max="80" name="kioskPadding" value="${escapeHtml(kiosk.padding||0)}"></div><label class="checkbox-row"><input type="checkbox" name="chargingGated" ${state.settings.chargingGated?'checked':''} ${overrides.chargingGated?'disabled':''}> Only host the dashboard while charging</label><div class="field"><label>Integration log level</label><select class="settings-input" name="logLevel" ${overrides.logLevel?'disabled':''}>${[['error','Errors only'],['warn','Warnings'],['info','Information'],['debug','Debug'],['trace','Trace (very verbose)']].map(([value,label])=>`<option value="${value}" ${(state.settings.logLevel||'info')===value?'selected':''}>${label}</option>`).join('')}</select><small>Debug logs Core requests, reconnects, entity refreshes, media requests, camera handling and dashboard clients. Credentials and camera URLs are redacted.</small></div></section>`,
+    icons: iconLibrarySettingsPanel(),
     language: localizationEditorPanel(),
     entities: entityAccessEditorPanel(),
     screensaver: `<section class="settings-section"><h3>Screensaver appearance</h3><label class="checkbox-row"><input type="checkbox" name="screensaverEnabled" ${saver.enabled?'checked':''}> Enable idle screensaver</label><div class="field-row"><div class="field"><label>Start after seconds</label><input class="settings-input" type="number" min="15" max="86400" name="screensaverTimeout" value="${escapeHtml(saver.timeoutSeconds||300)}"></div><div class="field"><label>Layout</label><select class="settings-input" name="screensaverMode">${[['clock','Clock'],['image','Image only'],['clock_image','Clock over image']].map(([v,l])=>`<option value="${v}" ${saver.mode===v?'selected':''}>${l}</option>`).join('')}</select></div></div><div class="field"><label>Title</label><input class="settings-input" name="screensaverTitle" value="${escapeHtml(saver.title||'')}"></div><div class="field"><label>Image URL</label><input class="settings-input" name="screensaverImage" value="${escapeHtml(saver.image||'')}"></div><div class="field-row"><div class="field"><label>Upload image</label><input class="settings-input" type="file" name="screensaverImageFile" accept="image/*"></div><div class="field"><label>Image fit</label><select class="settings-input" name="screensaverImageFit">${['cover','contain','fill'].map((value)=>`<option value="${value}" ${(saver.imageFit||'cover')===value?'selected':''}>${value}</option>`).join('')}</select></div></div><div class="field-row"><div class="field"><label>Background</label>${renderColorPicker('screensaverBackground', saver.background || '#000000')}</div><div class="field"><label>Foreground</label>${renderColorPicker('screensaverForeground', saver.foreground || '#ffffff')}</div></div><div class="field"><label>Image darkening</label><input type="range" min="0" max="90" name="screensaverOverlay" value="${escapeHtml(saver.overlay??25)}"></div><div class="field-row"><div class="field"><label>Content scale</label><input type="range" min="50" max="180" name="screensaverContentScale" value="${escapeHtml(saver.contentScale||100)}"></div><div class="field"><label>Clock scale</label><input type="range" min="50" max="180" name="screensaverClockSize" value="${escapeHtml(saver.clockSize||100)}"></div></div><div class="field"><label>Movement loop duration (seconds)</label><input class="settings-input" type="number" min="30" max="1800" name="screensaverMovementDuration" value="${escapeHtml(saver.movementDuration||180)}"></div><div class="field"><label>Triggered widget grid columns</label><select class="settings-input" name="screensaverWidgetColumns">${[1,2,3,4].map((value)=>`<option value="${value}" ${Math.max(1,Number(saver.widgetColumns)||2)===value?'selected':''}>${value} column${value===1?'':'s'}</option>`).join('')}</select><small>Triggered widgets reserve this grid below the clock. Each trigger can choose its own column span.</small></div><label class="checkbox-row"><input type="checkbox" name="screensaverShowDate" ${saver.showDate!==false?'checked':''}> Show date</label><label class="checkbox-row"><input type="checkbox" name="screensaverShowBattery" ${saver.showBattery!==false?'checked':''}> Show battery</label><label class="checkbox-row"><input type="checkbox" name="screensaverShowConnection" ${saver.showConnection?'checked':''}> Show connection status</label><label class="checkbox-row"><input type="checkbox" name="screensaverShowWakeHint" ${saver.showWakeHint!==false?'checked':''}> Show wake hint</label><label class="checkbox-row"><input type="checkbox" name="screensaverMovement" ${saver.movement!==false?'checked':''}> Use endless burn-in movement loop</label><section class="screensaver-lock-settings"><h3>Lock mode</h3><label class="checkbox-row"><input type="checkbox" name="screensaverLockEnabled" ${saver.lockEnabled?'checked':''}> Require a PIN to leave the screensaver</label><div class="field-row"><div class="field"><label>${saver.lockPinHash?'Replace screensaver PIN':'Screensaver PIN'}</label><input class="settings-input" type="password" inputmode="numeric" autocomplete="new-password" name="screensaverLockPin" placeholder="${saver.lockPinHash?'Leave empty to keep current PIN':'Required when lock mode is enabled'}"></div><div class="field"><label>PIN hint</label><input class="settings-input" name="screensaverLockPinHint" value="${escapeHtml(saver.lockPinHint||'')}" placeholder="Optional hint"></div></div>${saver.lockPinHash?'<label class="checkbox-row"><input type="checkbox" name="screensaverLockPinClear"> Remove stored screensaver PIN</label>':''}</section><button type="button" class="pill-button" data-action="preview-screensaver">${icon('visibility',18)} Preview saved screensaver</button></section>`,
@@ -5959,7 +6181,7 @@ function renderSettingsEditor() {
     notifications: `<section class="settings-section"><h3>Automatic notifications</h3><p class="muted">These sources feed the Alert Center widget, the Active Alerts modal and the Status Bar indicator.</p><label class="checkbox-row"><input type="checkbox" name="notificationAutoLowBattery" ${notifications.autoLowBattery?'checked':''}> Low battery alerts</label><div class="field"><label>Low battery threshold</label><input class="settings-input" type="number" min="1" max="100" name="notificationBatteryThreshold" value="${escapeHtml(notifications.batteryThreshold)}"><small>Batteries below 10% are treated as critical.</small></div><label class="checkbox-row"><input type="checkbox" name="notificationAutoUnavailable" ${notifications.autoUnavailable?'checked':''}> Unavailable entity alerts</label><label class="checkbox-row"><input type="checkbox" name="notificationAutoUpdates" ${notifications.autoUpdates?'checked':''}> Available update alerts</label></section><section class="settings-section"><h3>Acknowledgement and dismissal</h3><div class="field-row"><div class="field"><label>Acknowledge for minutes</label><input class="settings-input" type="number" min="1" max="10080" name="notificationAcknowledgeMinutes" value="${escapeHtml(notifications.acknowledgeMinutes)}"></div><div class="field"><label>Dismiss for hours</label><input class="settings-input" type="number" min="1" max="8760" name="notificationDismissHours" value="${escapeHtml(notifications.dismissHours)}"></div></div><div class="field"><label>Maximum Status Bar alerts</label><input class="settings-input" type="number" min="1" max="500" name="notificationMaxStatusAlerts" value="${escapeHtml(notifications.maxStatusAlerts)}"><small>This limits the count used by the Status Bar indicator and Active Alerts modal.</small></div></section>`
   };
   panels.backup = backupEditorPanel();
-  return flowEditorShell({ eyebrow:'UNFOLDED CIRCLE', title:'Settings', formAttribute:'data-settings-form', className:'main-settings-flow', steps:[{id:'connection',label:'Connection'},{id:'display',label:'Display'},{id:'language',label:'Language'},{id:'entities',label:'Entities'},{id:'screensaver',label:'Screensaver'},{id:'triggers',label:'Triggers'},{id:'notifications',label:'Notifications'},{id:'backup',label:'Backup'}], panels, preview:settingsEditorPreview(), submitLabel:'Save settings' });
+  return flowEditorShell({ eyebrow:'UNFOLDED CIRCLE', title:'Settings', formAttribute:'data-settings-form', className:'main-settings-flow', steps:[{id:'connection',label:'Connection'},{id:'display',label:'Display'},{id:'icons',label:'Icons'},{id:'language',label:'Language'},{id:'entities',label:'Entities'},{id:'screensaver',label:'Screensaver'},{id:'triggers',label:'Triggers'},{id:'notifications',label:'Notifications'},{id:'backup',label:'Backup'}], panels, preview:settingsEditorPreview(), submitLabel:'Save settings' });
 }
 
 
@@ -6440,14 +6662,13 @@ function routineActionEditorRow(action,index) { const a=normalizeRoutineAction(a
 
 function renderWidgetAppearanceSettings(item) {
   const settings = item.settings || {};
-  const iconPreview = settings.iconMode === 'upload' && settings.customIconData
-    ? `<div class="custom-icon-preview"><img src="${escapeHtml(settings.customIconData)}" alt=""><span>${escapeHtml(settings.customIconName || 'Uploaded icon')}</span></div>`
-    : settings.iconMode === 'material' && settings.materialIcon
-      ? `<div class="custom-icon-preview" data-material-icon-preview><span>${materialSymbol(settings.materialIcon, 34)}</span><span>${escapeHtml(settings.materialIcon)}</span></div>`
-      : `<div class="custom-icon-preview" data-material-icon-preview hidden></div>`;
+  const uploadVisible = settings.iconMode === 'upload' && settings.customIconData;
+  const materialVisible = settings.iconMode === 'material' && settings.materialIcon;
+  const unfoldedVisible = settings.iconMode === 'unfolded_tools' && settings.unfoldedToolsIconUrl;
+  const iconPreviews = `<div class="custom-icon-preview" data-uploaded-icon-preview ${uploadVisible ? '' : 'hidden'}>${uploadVisible ? `<img src="${escapeHtml(settings.customIconData)}" alt=""><span>${escapeHtml(settings.customIconName || 'Uploaded icon')}</span>` : ''}</div><div class="custom-icon-preview" data-material-icon-preview ${materialVisible ? '' : 'hidden'}>${materialVisible ? `<span>${materialSymbol(settings.materialIcon, 34)}</span><span>${escapeHtml(settings.materialIcon)}</span>` : ''}</div><div class="custom-icon-preview" data-unfolded-tools-icon-preview ${unfoldedVisible ? '' : 'hidden'}>${unfoldedVisible ? `<img src="${escapeHtml(settings.unfoldedToolsIconUrl)}" alt=""><span>${escapeHtml(settings.unfoldedToolsIconAsset?.name || 'unfolded.tools icon')}</span>` : ''}</div>`;
   return `<section class="settings-section advanced-widget-settings"><h3>Widget shell</h3><label class="checkbox-row"><input type="checkbox" name="showWidgetTitle" ${settings.showWidgetTitle !== false ? 'checked' : ''}> Show the widget title or entity name</label><label class="checkbox-row"><input type="checkbox" name="showWidgetBackground" ${settings.showWidgetBackground !== false ? 'checked' : ''}> Show widget background</label><label class="checkbox-row"><input type="checkbox" name="showWidgetBorder" ${settings.showWidgetBorder !== false ? 'checked' : ''}> Show widget border and hover outline</label></section>
   <section class="settings-section advanced-widget-settings"><h3>Text overflow</h3><div class="field"><label>When text is too long</label><select class="settings-input" name="textOverflow">${[['scroll','Auto-scroll'],['wrap','Wrap onto multiple lines'],['truncate','Truncate with ellipsis']].map(([value,label]) => `<option value="${value}" ${widgetTextMode(item) === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div></section>
-  <section class="settings-section advanced-widget-settings"><h3>Widget icon</h3><div class="field"><label>Icon source</label><select class="settings-input" name="iconMode">${[['default','Widget default'],['material','Material Symbol'],['upload','Uploaded PNG or SVG']].map(([value,label]) => `<option value="${value}" ${settings.iconMode === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>Material Symbol</label><input class="settings-input" name="materialIcon" value="${escapeHtml(settings.materialIcon || '')}" placeholder="Choose a symbol" readonly><button type="button" class="pill-button icon-picker-open" data-action="toggle-material-icon-picker">${icon('grid', 18)} Browse every Material Symbol</button><div class="material-icon-picker" data-material-icon-picker hidden><input class="settings-input" type="search" data-material-icon-search placeholder="Search icons"><div data-material-icon-results>${renderMaterialSymbolResults('')}</div></div><small>The complete Material Symbols Rounded catalog and variable font are bundled locally. Symbols render at weight 100 and require no external request.</small></div><div class="field"><label>Upload PNG or SVG</label><input class="settings-input" type="file" name="customIconFile" accept="image/png,image/svg+xml"><small>Maximum 2 MB. The image is stored in the dashboard configuration.</small></div>${iconPreview}${settings.customIconData ? '<label class="checkbox-row"><input type="checkbox" name="clearCustomIcon"> Remove uploaded icon</label>' : ''}</section>`;
+  <section class="settings-section advanced-widget-settings"><h3>Widget icon</h3><div class="field"><label>Icon source</label><select class="settings-input" name="iconMode">${[['default','Widget default'],['material','Material Symbol'],['unfolded_tools','unfolded.tools'],['upload','Uploaded PNG or SVG']].map(([value,label]) => `<option value="${value}" ${settings.iconMode === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>Material Symbol</label><input class="settings-input" name="materialIcon" value="${escapeHtml(settings.materialIcon || '')}" placeholder="Choose a symbol" readonly><button type="button" class="pill-button icon-picker-open" data-action="toggle-material-icon-picker">${icon('grid', 18)} Browse every Material Symbol</button><div class="material-icon-picker" data-material-icon-picker hidden><input class="settings-input" type="search" data-material-icon-search placeholder="Search icons"><div data-material-icon-results>${renderMaterialSymbolResults('')}</div></div><small>The complete Material Symbols Rounded catalog and variable font are bundled locally.</small></div><div class="field"><label>unfolded.tools</label><button type="button" class="pill-button unfolded-tools-picker-open" data-action="open-unfolded-tools-picker">${materialSymbol('language',18)} Browse unfolded.tools</button><input type="hidden" name="unfoldedToolsIconUrl" value="${escapeHtml(settings.unfoldedToolsIconUrl || '')}"><input type="hidden" name="unfoldedToolsIconAsset" value="${escapeHtml(settings.unfoldedToolsIconAsset ? JSON.stringify(settings.unfoldedToolsIconAsset) : '')}"><small>Search app icons, TV app icons, community icons, and country-specific TV channel logos.</small></div><div class="field"><label>Upload PNG or SVG</label><input class="settings-input" type="file" name="customIconFile" accept="image/png,image/svg+xml,image/webp"><small>Maximum 2 MB. The image is stored in the dashboard configuration.</small></div>${iconPreviews}${settings.customIconData ? '<label class="checkbox-row"><input type="checkbox" name="clearCustomIcon"> Remove uploaded icon</label>' : ''}</section>`;
 }
 
 function renderWidgetCodeSettings(item) {
@@ -6494,6 +6715,8 @@ function previewItemFromForm(form, item) {
   preview.settings.textOverflow = String(data.get('textOverflow') || preview.settings.textOverflow || 'scroll');
   preview.settings.iconMode = String(data.get('iconMode') || preview.settings.iconMode || 'default');
   preview.settings.materialIcon = String(data.get('materialIcon') || preview.settings.materialIcon || '');
+  preview.settings.unfoldedToolsIconUrl = String(data.get('unfoldedToolsIconUrl') || preview.settings.unfoldedToolsIconUrl || '');
+  try { preview.settings.unfoldedToolsIconAsset = JSON.parse(String(data.get('unfoldedToolsIconAsset') || '{}')); } catch {}
   preview.settings.customHtmlMode = String(data.get('customHtmlMode') || preview.settings.customHtmlMode || 'append');
   preview.settings.customHtml = String(data.get('customHtml') || '');
   preview.settings.customCss = String(data.get('customCss') || '');
@@ -7448,9 +7671,12 @@ function handleActionClick(event, explicitActionNode = null) {
   else if (action === 'save-dashboard') { publishEditorChanges(); }
   else if (action === 'undo-dashboard') { undoDashboardChange(); }
   else if (action === 'redo-dashboard') { redoDashboardChange(); }
-  else if (action === 'open-settings') { state.backupImportCandidate = null; state.backupImportBusy = false; state.modal = { type: 'settings' }; renderModalRoot(); }
+  else if (action === 'open-settings') { state.backupImportCandidate = null; state.backupImportBusy = false; state.modal = { type: 'settings' }; renderModalRoot(); queueMicrotask(() => refreshUnfoldedToolsSettingsStatus()); }
   else if (action === 'export-dashboard-backup') { exportDashboardBackup(actionNode); }
   else if (action === 'import-dashboard-backup') { importDashboardBackup(actionNode.closest('[data-settings-form]'), actionNode); }
+  else if (action === 'test-unfolded-tools-connection') { testUnfoldedToolsConnection(actionNode.closest('[data-settings-form]'), actionNode); }
+  else if (action === 'refresh-unfolded-tools-cache') { refreshUnfoldedToolsSettingsStatus(actionNode.closest('[data-settings-form]')); }
+  else if (action === 'clear-unfolded-tools-cache') { clearUnfoldedToolsCache(actionNode.closest('[data-settings-form]')); }
   else if (action === 'open-navigation-editor') { state.modal = { type: 'navigation-settings' }; renderModalRoot(); }
   else if (action === 'open-statusbar-editor') { state.modal = { type: 'statusbar-settings' }; renderModalRoot(); }
   else if (action === 'statusbar-item-left') moveStatusbarEditorItem(actionNode.closest('[data-statusbar-layout-item]'), -1);
@@ -7537,6 +7763,7 @@ function handleActionClick(event, explicitActionNode = null) {
   else if (action === 'toggle-custom-color-picker') { const picker = actionNode.closest('[data-custom-color-picker]'); const popover = picker?.querySelector('[data-custom-color-popover]'); if (picker && popover) { const opening = popover.hidden; closeCustomColorPickers(opening ? picker : null); popover.hidden = !opening; actionNode.setAttribute('aria-expanded', String(opening)); if (opening) picker.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); } }
   else if (action === 'set-custom-color') { const picker = actionNode.closest('[data-custom-color-picker]'); if (picker) setCustomColorPickerValue(picker, actionNode.dataset.color || '#000000'); }
   else if (action === 'toggle-material-icon-picker') { const panel = actionNode.closest('[data-icon-choice],.field')?.querySelector('[data-material-icon-picker]'); if (panel) { panel.hidden = !panel.hidden; if (!panel.hidden) { state.materialSymbolPage = 1; loadMaterialSymbolsCatalog().then(() => updateMaterialSymbolPicker(panel)); updateMaterialSymbolPicker(panel); panel.querySelector('[data-material-icon-search]')?.focus(); } } }
+  else if (action === 'open-unfolded-tools-picker') { openUnfoldedToolsIconLibrary(actionNode); }
   else if (action === 'flow-editor-step') { setFlowEditorStep(actionNode.closest('form'), actionNode.dataset.flowEditorStep); }
   else if (action === 'flow-editor-previous' || action === 'flow-editor-next') { const form = actionNode.closest('form'); const steps = flowEditorSteps(form); const current = Math.max(0, steps.indexOf(form?.dataset.editorStep || steps[0])); setFlowEditorStep(form, steps[Math.max(0, Math.min(steps.length - 1, current + (action === 'flow-editor-next' ? 1 : -1)))]); }
   else if (action === 'widget-editor-step') { setWidgetEditorStep(actionNode.closest('form'), actionNode.dataset.widgetEditorStep); }
@@ -7549,7 +7776,7 @@ function handleActionClick(event, explicitActionNode = null) {
   else if (action === 'tab-editor-move') { const row = actionNode.closest('[data-tab-editor-row]'); const direction = Number(actionNode.dataset.direction); if (row && direction < 0 && row.previousElementSibling) row.parentElement.insertBefore(row, row.previousElementSibling); else if (row && direction > 0 && row.nextElementSibling) row.parentElement.insertBefore(row.nextElementSibling, row); syncTabEditor(actionNode.closest('form')); }
   else if (action === 'tab-editor-remove') { const row = actionNode.closest('[data-tab-editor-row]'); if (row && row.parentElement.children.length > 1) { row.remove(); syncTabEditor(actionNode.closest('form')); } }
   else if (action === 'material-icon-page') { updateMaterialSymbolPicker(actionNode.closest('[data-material-icon-picker]') || modalRoot, Number(actionNode.dataset.page) || 1); }
-  else if (action === 'select-material-icon') { const form = actionNode.closest('form'); const name = actionNode.dataset.iconName || ''; const choice = actionNode.closest('[data-icon-choice]'); if (choice) { const input = choice.querySelector('[name]'); if (input) { input.value = name; input.dispatchEvent(new Event('input',{bubbles:true})); } updateIconChoicePreview(choice); choice.querySelector('[data-material-icon-picker]')?.setAttribute('hidden',''); } else { const input = form?.querySelector('[name="materialIcon"]'); const mode = form?.querySelector('[name="iconMode"]'); if (input) input.value = name; if (mode) mode.value = 'material'; const preview = form?.querySelector('[data-material-icon-preview]'); if (preview) { preview.hidden = false; preview.innerHTML = `<span>${materialSymbol(name, 34)}</span><span>${escapeHtml(name)}</span>`; } scheduleWidgetEditorPreview(form); } }
+  else if (action === 'select-material-icon') { const form = actionNode.closest('form'); const name = actionNode.dataset.iconName || ''; const choice = actionNode.closest('[data-icon-choice]'); if (choice) { const input = choice.querySelector('[name]'); if (input) { input.value = name; input.dispatchEvent(new Event('input',{bubbles:true})); } updateIconChoicePreview(choice); choice.querySelector('[data-material-icon-picker]')?.setAttribute('hidden',''); } else { const input = form?.querySelector('[name="materialIcon"]'); const mode = form?.querySelector('[name="iconMode"]'); if (input) input.value = name; if (mode) mode.value = 'material'; form?.querySelectorAll('[data-uploaded-icon-preview],[data-unfolded-tools-icon-preview]').forEach((node) => { node.hidden = true; }); const preview = form?.querySelector('[data-material-icon-preview]'); if (preview) { preview.hidden = false; preview.innerHTML = `<span>${materialSymbol(name, 34)}</span><span>${escapeHtml(name)}</span>`; } scheduleWidgetEditorPreview(form); } }
   else if (action === 'clear-icon-choice') { const choice = actionNode.closest('[data-icon-choice]'); const input = choice?.querySelector('[name]'); if (input) { input.value = ''; input.dispatchEvent(new Event('input',{bubbles:true})); } updateIconChoicePreview(choice); }
   else if (action === 'save-background-preset') { saveBackgroundPresetFromForm(actionNode.closest('[data-background-form]')); }
   else if (action === 'delete-background-preset') { const presetId = actionNode.dataset.presetId || ''; const saved = savedBackgroundPresetById(presetId); if (saved) { for (const dashboard of state.config.dashboards) { if (dashboardBackgroundPreset(dashboard.background) === savedBackgroundPresetKey(presetId)) dashboard.background = { preset:'custom', ...normalizeBackgroundDefinition(saved.background) }; } state.config.backgroundPresets = savedBackgroundPresets().filter((entry) => entry.id !== presetId); persistConfig(); renderModalRoot(); toast(`Deleted background preset ${saved.name}`); } }
@@ -7856,8 +8083,40 @@ modalRoot.addEventListener('pointercancel', finishStatusbarPointerDrag);
 
 drawerRoot.addEventListener('click', handleActionClick);
 modalRoot.addEventListener('click', handleActionClick);
+iconLibraryRoot.addEventListener('click', (event) => {
+  const action = event.target.closest('[data-unfolded-tools-action]');
+  if (!action) return;
+  event.preventDefault();
+  const type = action.dataset.unfoldedToolsAction;
+  if (type === 'close') closeUnfoldedToolsIconLibrary();
+  else if (type === 'category') {
+    state.unfoldedToolsPicker.category = action.dataset.category || 'apps';
+    state.unfoldedToolsPicker.page = 1;
+    state.unfoldedToolsPicker.query = '';
+    state.unfoldedToolsPicker.icons = [];
+    void loadUnfoldedToolsIcons();
+  } else if (type === 'page') {
+    state.unfoldedToolsPicker.page = Math.max(1, Number(action.dataset.page) || 1);
+    void loadUnfoldedToolsIcons();
+  } else if (type === 'retry') void loadUnfoldedToolsIcons();
+  else if (type === 'select') void selectUnfoldedToolsIcon(action);
+});
+iconLibraryRoot.addEventListener('input', (event) => {
+  if (!event.target.matches('[data-unfolded-tools-search]')) return;
+  state.unfoldedToolsPicker.query = event.target.value;
+  state.unfoldedToolsPicker.page = 1;
+  clearTimeout(state.unfoldedToolsPicker.searchTimer);
+  state.unfoldedToolsPicker.searchTimer = setTimeout(() => void loadUnfoldedToolsIcons(), 240);
+});
+iconLibraryRoot.addEventListener('change', (event) => {
+  if (!event.target.matches('[data-unfolded-tools-country]')) return;
+  state.unfoldedToolsPicker.country = event.target.value;
+  state.unfoldedToolsPicker.page = 1;
+  void loadUnfoldedToolsIcons();
+});
 drawerRoot.addEventListener('pointerdown', () => registerUserActivity({ wake:false }));
 modalRoot.addEventListener('pointerdown', () => registerUserActivity({ wake:false }));
+iconLibraryRoot.addEventListener('pointerdown', () => registerUserActivity({ wake:false }));
 
 drawerRoot.addEventListener('input', (event) => {
   if (event.target.matches('[data-entity-search]')) {
@@ -8030,6 +8289,9 @@ modalRoot.addEventListener('change', async (event) => {
       form._previewCustomIconName = file.name;
       const mode = form.querySelector('[name="iconMode"]');
       if (mode) mode.value = 'upload';
+      form.querySelectorAll('[data-material-icon-preview],[data-unfolded-tools-icon-preview]').forEach((node) => { node.hidden = true; });
+      const preview = form.querySelector('[data-uploaded-icon-preview]');
+      if (preview) { preview.hidden = false; preview.innerHTML = `<img src="${escapeHtml(form._previewCustomIconData)}" alt=""><span>${escapeHtml(file.name || 'Uploaded icon')}</span>`; }
     }
   }
   scheduleWidgetEditorPreview(form);
@@ -8094,7 +8356,16 @@ modalRoot.addEventListener('submit', async (event) => {
       if (screensaverImageFile.size > 5 * 1024 * 1024) { toast('Screensaver image must be 5 MB or smaller', 'error'); return; }
       screensaverImage = await fileToDataUrl(screensaverImageFile);
     }
-    const payload = { dashboardPort: Number(data.get('dashboardPort') || state.settings.dashboardPort), reconnect: data.get('reconnect') === 'on', chargingGated: data.get('chargingGated') === 'on', logLevel: String(data.get('logLevel') || state.settings.logLevel || 'info') };
+    const payload = {
+      dashboardPort: Number(data.get('dashboardPort') || state.settings.dashboardPort),
+      reconnect: data.get('reconnect') === 'on',
+      chargingGated: data.get('chargingGated') === 'on',
+      logLevel: String(data.get('logLevel') || state.settings.logLevel || 'info'),
+      unfoldedToolsApiKey: String(data.get('unfoldedToolsApiKey') || '').trim(),
+      clearUnfoldedToolsApiKey: data.get('clearUnfoldedToolsApiKey') === 'on',
+      unfoldedToolsCacheSelected: data.get('unfoldedToolsCacheSelected') === 'on',
+      unfoldedToolsIncludeInBackup: data.get('unfoldedToolsIncludeInBackup') === 'on'
+    };
     state.config.ui.kiosk = { scaleToFit: data.get('kioskScaleToFit') === 'on', allowUpscale: data.get('kioskAllowUpscale') === 'on', padding: Math.max(0, Math.min(80, Number(data.get('kioskPadding')) || 0)), widthMode: ['fill','center','left'].includes(String(data.get('kioskWidthMode'))) ? String(data.get('kioskWidthMode')) : 'fill' };
     const localizationLanguage = String(data.get('localizationLanguage') || 'en').toLowerCase();
     let editedDictionary = {};

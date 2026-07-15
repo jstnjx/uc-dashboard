@@ -35,10 +35,14 @@ export class SettingsManager {
       apiKeyId: '',
       provisionedAt: '',
       reconnect: true,
-      chargingGated: boolFromEnv(process.env.CHARGING_GATED, this.onRemote),
+      chargingGated: boolFromEnv(process.env.CHARGING_GATED, false),
+      chargingGatedConfigured: process.env.CHARGING_GATED !== undefined,
       dashboardHost: process.env.DASHBOARD_HOST || '0.0.0.0',
       dashboardPort: Number.parseInt(process.env.DASHBOARD_PORT || '11080', 10),
-      logLevel: normalizeLogLevel(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL || 'info')
+      logLevel: normalizeLogLevel(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL || 'info'),
+      unfoldedToolsApiKey: process.env.UNFOLDED_TOOLS_API_KEY || '',
+      unfoldedToolsCacheSelected: boolFromEnv(process.env.UNFOLDED_TOOLS_CACHE_SELECTED, true),
+      unfoldedToolsIncludeInBackup: boolFromEnv(process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP, true)
     };
 
     let stored = {};
@@ -51,15 +55,32 @@ export class SettingsManager {
       }
     }
     delete stored['demo' + 'Mode'];
+    const legacyRemoteChargingGate = this.onRemote
+      && process.env.CHARGING_GATED === undefined
+      && stored.chargingGated === true
+      && stored.chargingGatedConfigured !== true;
     this.settings = { ...defaults, ...stored };
 
+    if (legacyRemoteChargingGate) {
+      this.settings.chargingGated = false;
+      this.settings.chargingGatedConfigured = false;
+      log.warn('Disabled legacy charging-gated dashboard default so the HTTP listener remains reachable while the Remote is off the charger', {
+        dashboardPort: this.settings.dashboardPort
+      });
+    }
 
     if (process.env.REMOTE_HTTP_URL) this.settings.remoteHttpUrl = process.env.REMOTE_HTTP_URL;
     if (process.env.REMOTE_WS_URL) this.settings.remoteWsUrl = process.env.REMOTE_WS_URL;
     if (process.env.REMOTE_API_KEY) this.settings.apiKey = process.env.REMOTE_API_KEY;
     if (process.env.DASHBOARD_HOST) this.settings.dashboardHost = process.env.DASHBOARD_HOST;
     if (process.env.DASHBOARD_PORT) this.settings.dashboardPort = Number.parseInt(process.env.DASHBOARD_PORT, 10);
-    if (process.env.CHARGING_GATED !== undefined) this.settings.chargingGated = boolFromEnv(process.env.CHARGING_GATED, this.onRemote);
+    if (process.env.CHARGING_GATED !== undefined) {
+      this.settings.chargingGated = boolFromEnv(process.env.CHARGING_GATED, false);
+      this.settings.chargingGatedConfigured = true;
+    }
+    if (process.env.UNFOLDED_TOOLS_API_KEY) this.settings.unfoldedToolsApiKey = process.env.UNFOLDED_TOOLS_API_KEY;
+    if (process.env.UNFOLDED_TOOLS_CACHE_SELECTED !== undefined) this.settings.unfoldedToolsCacheSelected = boolFromEnv(process.env.UNFOLDED_TOOLS_CACHE_SELECTED, true);
+    if (process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP !== undefined) this.settings.unfoldedToolsIncludeInBackup = boolFromEnv(process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP, true);
     if (process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL) {
       this.settings.logLevel = normalizeLogLevel(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL);
     } else {
@@ -78,6 +99,9 @@ export class SettingsManager {
       chargingGated: this.settings.chargingGated,
       logLevel: this.settings.logLevel,
       hasApiKey: Boolean(this.settings.apiKey),
+      unfoldedToolsApiKeyConfigured: Boolean(this.settings.unfoldedToolsApiKey),
+      unfoldedToolsCacheSelected: Boolean(this.settings.unfoldedToolsCacheSelected),
+      unfoldedToolsIncludeInBackup: Boolean(this.settings.unfoldedToolsIncludeInBackup),
       remoteHttpUrl: this.settings.remoteHttpUrl,
       remoteWsUrl: this.settings.remoteWsUrl
     });
@@ -92,7 +116,9 @@ export class SettingsManager {
       reconnect: Boolean(this.settings.reconnect),
       chargingGated: Boolean(this.settings.chargingGated),
       dashboardPort: Number(this.settings.dashboardPort),
-      logLevel: normalizeLogLevel(this.settings.logLevel)
+      logLevel: normalizeLogLevel(this.settings.logLevel),
+      unfoldedToolsCacheSelected: Boolean(this.settings.unfoldedToolsCacheSelected),
+      unfoldedToolsIncludeInBackup: Boolean(this.settings.unfoldedToolsIncludeInBackup)
     };
   }
 
@@ -118,6 +144,9 @@ export class SettingsManager {
       dashboardHost: this.settings.dashboardHost,
       dashboardPort: this.settings.dashboardPort,
       logLevel: this.settings.logLevel,
+      unfoldedToolsApiKeyConfigured: Boolean(this.settings.unfoldedToolsApiKey),
+      unfoldedToolsCacheSelected: Boolean(this.settings.unfoldedToolsCacheSelected),
+      unfoldedToolsIncludeInBackup: Boolean(this.settings.unfoldedToolsIncludeInBackup),
       onRemote: this.onRemote,
       environmentOverrides: {
         remoteHttpUrl: Boolean(process.env.REMOTE_HTTP_URL),
@@ -125,7 +154,10 @@ export class SettingsManager {
         apiKey: Boolean(process.env.REMOTE_API_KEY),
         dashboardPort: Boolean(process.env.DASHBOARD_PORT),
         chargingGated: process.env.CHARGING_GATED !== undefined,
-        logLevel: Boolean(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL)
+        logLevel: Boolean(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL),
+        unfoldedToolsApiKey: Boolean(process.env.UNFOLDED_TOOLS_API_KEY),
+        unfoldedToolsCacheSelected: process.env.UNFOLDED_TOOLS_CACHE_SELECTED !== undefined,
+        unfoldedToolsIncludeInBackup: process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP !== undefined
       }
     };
   }
@@ -157,7 +189,14 @@ export class SettingsManager {
   async update(body) {
     const previous = { ...this.settings };
     if (typeof body.reconnect === 'boolean') this.settings.reconnect = body.reconnect;
-    if (typeof body.chargingGated === 'boolean' && process.env.CHARGING_GATED === undefined) this.settings.chargingGated = body.chargingGated;
+    if (typeof body.chargingGated === 'boolean' && process.env.CHARGING_GATED === undefined) {
+      this.settings.chargingGated = body.chargingGated;
+      this.settings.chargingGatedConfigured = true;
+    }
+    if (typeof body.unfoldedToolsCacheSelected === 'boolean' && process.env.UNFOLDED_TOOLS_CACHE_SELECTED === undefined) this.settings.unfoldedToolsCacheSelected = body.unfoldedToolsCacheSelected;
+    if (typeof body.unfoldedToolsIncludeInBackup === 'boolean' && process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP === undefined) this.settings.unfoldedToolsIncludeInBackup = body.unfoldedToolsIncludeInBackup;
+    if (body.clearUnfoldedToolsApiKey === true && !process.env.UNFOLDED_TOOLS_API_KEY) this.settings.unfoldedToolsApiKey = '';
+    if (typeof body.unfoldedToolsApiKey === 'string' && body.unfoldedToolsApiKey.trim() && !process.env.UNFOLDED_TOOLS_API_KEY) this.settings.unfoldedToolsApiKey = body.unfoldedToolsApiKey.trim();
     if (body.logLevel !== undefined && !(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL)) {
       this.settings.logLevel = normalizeLogLevel(body.logLevel);
       setLogLevel(this.settings.logLevel);
@@ -172,7 +211,10 @@ export class SettingsManager {
       reconnect: this.settings.reconnect,
       chargingGated: this.settings.chargingGated,
       dashboardPort: this.settings.dashboardPort,
-      logLevel: this.settings.logLevel
+      logLevel: this.settings.logLevel,
+      unfoldedToolsApiKeyConfigured: Boolean(this.settings.unfoldedToolsApiKey),
+      unfoldedToolsCacheSelected: Boolean(this.settings.unfoldedToolsCacheSelected),
+      unfoldedToolsIncludeInBackup: Boolean(this.settings.unfoldedToolsIncludeInBackup)
     });
 
     return {

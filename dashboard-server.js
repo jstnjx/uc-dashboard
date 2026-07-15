@@ -2,14 +2,19 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createLogger } from './logger.js';
 
 const log = createLogger('dashboard-server');
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.1';
 const BACKUP_FORMAT = 'uc-dashboard-backup';
 const BACKUP_FORMAT_VERSION = 1;
+const UNFOLDED_TOOLS_API_BASE = process.env.UNFOLDED_TOOLS_API_BASE || 'https://api.unfolded.tools';
+const UNFOLDED_TOOLS_CATEGORIES = new Set(['apps', 'tv-apps', 'community', 'tv-logos']);
+const ICON_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+const ICON_METADATA_TTL_MS = 6 * 60 * 60 * 1000;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -33,6 +38,7 @@ const DEFAULT_CONFIG = {
   widgetPresets: [],
   widgetMasters: [],
   backgroundPresets: [],
+  iconAssets: {},
   ui: { localization: { enabled: false, language: 'en', customDictionaries: {} }, entities: { mode: 'all', includedIds: [] }, notifications: { autoLowBattery: true, batteryThreshold: 20, autoUnavailable: true, autoUpdates: true, acknowledgeMinutes: 60, dismissHours: 24, maxStatusAlerts: 100 }, screensaver: { enabled: false, timeoutSeconds: 300, mode: 'clock', title: '', image: '', background: '#000000', foreground: '#ffffff', overlay: 25, showDate: true, showBattery: true, showConnection: false, movement: true, movementDuration: 180, contentScale: 100, clockSize: 100, showWakeHint: true, imageFit: 'cover', lockEnabled: false, lockPinHash: '', lockPinHint: '', triggers: [] }, kiosk: { scaleToFit: false, allowUpscale: false, padding: 0, widthMode: 'fill' }, navigation: { mode: 'default', showIcons: true, showLabels: true, cardWidth: 152, transition: 'slide' }, statusBar: { visible: true, layoutColumns: 7, layoutItems: [{ id: 'status-time', type: 'time' }, { id: 'status-page', type: 'page' }, { id: 'status-connection', type: 'connection_dot' }, { id: 'status-charging', type: 'charging_indicator' }, { id: 'status-wifi', type: 'wifi' }, { id: 'status-alerts', type: 'alerts' }, { id: 'status-profile', type: 'profile' }], showSeconds: false, hour12: false, profileText: 'W', alignment: 'distributed', background: '#000000', backgroundOpacity: 98, foreground: '#d0d0d0', height: 40, sticky: true, blur: 0, borderWidth: 0, borderColor: '#252525', radius: 0, shadow: false } },
   dashboards: [{ id: 'main', name: 'Living Room', navIcon: 'living', navColor: '#d0d0d0', background: { preset: 'black', color: '#000000', image: '', overlay: 0, fit: 'cover', position: 'center center', fixed: true }, items: [] }]
 };
@@ -85,7 +91,7 @@ function countDashboardWidgets(config) {
   return count;
 }
 
-function createBackupPayload(config, settings, exportedAt = new Date()) {
+function createBackupPayload(config, settings, exportedAt = new Date(), iconAssets = []) {
   return {
     format: BACKUP_FORMAT,
     formatVersion: BACKUP_FORMAT_VERSION,
@@ -93,6 +99,7 @@ function createBackupPayload(config, settings, exportedAt = new Date()) {
     exportedAt: exportedAt.toISOString(),
     dashboardConfig: config,
     settings,
+    iconAssets,
     summary: {
       dashboards: Array.isArray(config?.dashboards) ? config.dashboards.length : 0,
       widgets: countDashboardWidgets(config),
@@ -106,9 +113,9 @@ function extractBackupPayload(value) {
   if (!source) throw new Error('Backup must be a JSON object');
   if (source.format === BACKUP_FORMAT) {
     if (Number(source.formatVersion) !== BACKUP_FORMAT_VERSION) throw new Error(`Unsupported backup format version: ${source.formatVersion}`);
-    return { dashboardConfig: source.dashboardConfig, settings: source.settings, metadata: source };
+    return { dashboardConfig: source.dashboardConfig, settings: source.settings, iconAssets: Array.isArray(source.iconAssets) ? source.iconAssets : [], metadata: source };
   }
-  if (validateDashboardConfig(source)) return { dashboardConfig: source, settings: null, metadata: { legacy: true } };
+  if (validateDashboardConfig(source)) return { dashboardConfig: source, settings: null, iconAssets: [], metadata: { legacy: true } };
   throw new Error('This file is not a valid UC Dashboard backup');
 }
 
@@ -138,6 +145,39 @@ function validateDashboardConfig(config) {
     dashboard && typeof dashboard.id === 'string' && typeof dashboard.name === 'string' && Array.isArray(dashboard.items)));
 }
 
+function normalizeUnfoldedToolsCategory(value) {
+  const category = String(value || '').trim().toLowerCase();
+  if (!UNFOLDED_TOOLS_CATEGORIES.has(category)) throw Object.assign(new Error('Unsupported unfolded.tools icon category'), { statusCode: 400 });
+  return category;
+}
+
+function normalizeUnfoldedToolsCountry(value) {
+  const country = String(value || '').trim().toLowerCase();
+  if (!country || !/^[a-z0-9-]{2,80}$/.test(country)) throw Object.assign(new Error('A valid TV-logo country is required'), { statusCode: 400 });
+  return country;
+}
+
+function safeIconCacheFilename(category, country, id) {
+  const digest = createHash('sha256').update(`${category}:${country || ''}:${id}`).digest('hex').slice(0, 32);
+  return `${category.replace(/[^a-z0-9-]/g, '-')}-${digest}.webp`;
+}
+
+function cachedIconUrl(filename) {
+  return `/api/unfolded-tools/cached/${encodeURIComponent(filename)}`;
+}
+
+function unfoldedToolsApiError(status, payload = {}) {
+  const message = payload?.message || payload?.error || `unfolded.tools request failed (${status})`;
+  const error = new Error(message);
+  error.statusCode = status === 401 || status === 403 ? 401 : status === 404 ? 404 : status >= 500 ? 502 : 400;
+  return error;
+}
+
+function iconMimeFromFilename(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  return MIME_TYPES[ext] || 'application/octet-stream';
+}
+
 function requestQuery(url) {
   return Object.fromEntries(url.searchParams.entries());
 }
@@ -153,6 +193,13 @@ function dashboardRequestPayload(pathname, body) {
       widgetMasters: Array.isArray(body.widgetMasters) ? body.widgetMasters.length : 0
     };
   }
+  if (pathname === '/api/settings' || pathname === '/api/unfolded-tools/test') {
+    return {
+      ...body,
+      ...(Object.prototype.hasOwnProperty.call(body, 'unfoldedToolsApiKey') ? { unfoldedToolsApiKey: '[redacted]' } : {}),
+      ...(Object.prototype.hasOwnProperty.call(body, 'apiKey') ? { apiKey: '[redacted]' } : {})
+    };
+  }
   return body;
 }
 
@@ -166,6 +213,7 @@ export class DashboardServer {
     this.onSettingsChanged = onSettingsChanged;
     this.configFile = path.join(dataDir, 'dashboard.json');
     this.backupDir = path.join(dataDir, 'backups');
+    this.iconCacheDir = path.join(dataDir, 'icons', 'unfolded-tools');
     this.server = null;
     this.listening = false;
     this.sseClients = new Set();
@@ -173,6 +221,7 @@ export class DashboardServer {
     this.configRevision = Date.now();
     this.mediaInflight = new Map();
     this.mediaCache = new Map();
+    this.unfoldedToolsMetadataCache = new Map();
 
     coreClient.on('runtime', () => this.broadcast('runtime', this.runtimeProvider()));
     coreClient.on('entities', () => { this.broadcast('entities', this.entities()); this.broadcast('entity_catalog', this.entityCatalog()); });
@@ -181,6 +230,7 @@ export class DashboardServer {
 
   async initialize() {
     await mkdir(this.dataDir, { recursive: true });
+    await mkdir(this.iconCacheDir, { recursive: true });
     if (!existsSync(this.configFile)) {
       await writeJsonAtomic(this.configFile, DEFAULT_CONFIG);
       log.info('Created default dashboard configuration', { configFile: this.configFile, schemaVersion: DEFAULT_CONFIG.version });
@@ -422,6 +472,72 @@ export class DashboardServer {
         await this.#proxyCameraStream(requestUrl, req, res);
         return;
       }
+      if (pathname === '/api/unfolded-tools/status' && req.method === 'GET') {
+        const cache = await this.#unfoldedToolsCacheStats();
+        sendJson(res, 200, {
+          configured: Boolean(this.settingsManager.get().unfoldedToolsApiKey),
+          cacheSelected: this.settingsManager.get().unfoldedToolsCacheSelected !== false,
+          includeInBackup: this.settingsManager.get().unfoldedToolsIncludeInBackup !== false,
+          cache
+        });
+        return;
+      }
+      if (pathname === '/api/unfolded-tools/test' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req, 64 * 1024));
+        log.debug('Dashboard API request payload', { direction: 'dashboard_to_integration', requestId, pathname, payload: dashboardRequestPayload(pathname, body) });
+        const apiKey = String(body?.apiKey || this.settingsManager.get().unfoldedToolsApiKey || '').trim();
+        const result = await this.#unfoldedToolsFetchJson('/v1/icons/apps/count', apiKey);
+        sendJson(res, 200, { ok: true, total: Number(result?.total) || 0, category: result?.category || 'apps' });
+        return;
+      }
+      if (pathname === '/api/unfolded-tools/countries' && req.method === 'GET') {
+        const payload = await this.#unfoldedToolsFetchJson('/v1/icons/tv-logos/countries');
+        const countries = Array.isArray(payload?.countries) ? payload.countries.map((entry) => ({
+          country: String(entry?.country || ''),
+          iconCount: Number(entry?.icon_count) || 0
+        })).filter((entry) => entry.country) : [];
+        sendJson(res, 200, { countries, total: Number(payload?.total_countries) || countries.length, totalIcons: Number(payload?.total_icons) || 0 });
+        return;
+      }
+      if (pathname === '/api/unfolded-tools/icons' && req.method === 'GET') {
+        const category = normalizeUnfoldedToolsCategory(requestUrl.searchParams.get('category'));
+        const country = category === 'tv-logos' ? normalizeUnfoldedToolsCountry(requestUrl.searchParams.get('country')) : '';
+        const query = String(requestUrl.searchParams.get('query') || '').trim().toLocaleLowerCase();
+        const page = Math.max(1, Number.parseInt(requestUrl.searchParams.get('page') || '1', 10) || 1);
+        const limit = Math.max(12, Math.min(120, Number.parseInt(requestUrl.searchParams.get('limit') || '48', 10) || 48));
+        const metadata = await this.#unfoldedToolsMetadata(category, country);
+        const filtered = query ? metadata.icons.filter((entry) => entry.name.toLocaleLowerCase().includes(query) || entry.id.toLocaleLowerCase().includes(query)) : metadata.icons;
+        const pages = Math.max(1, Math.ceil(filtered.length / limit));
+        const resolvedPage = Math.min(page, pages);
+        const start = (resolvedPage - 1) * limit;
+        sendJson(res, 200, {
+          category,
+          country,
+          total: filtered.length,
+          page: resolvedPage,
+          pages,
+          refreshedAt: metadata.refreshedAt,
+          icons: filtered.slice(start, start + limit)
+        });
+        return;
+      }
+      if (pathname === '/api/unfolded-tools/cache' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req, 128 * 1024));
+        const result = await this.#cacheUnfoldedToolsIcon(body);
+        sendJson(res, 200, result);
+        return;
+      }
+      if (pathname === '/api/unfolded-tools/cache' && req.method === 'DELETE') {
+        await rm(this.iconCacheDir, { recursive: true, force: true });
+        await mkdir(this.iconCacheDir, { recursive: true });
+        sendJson(res, 200, { ok: true, cache: await this.#unfoldedToolsCacheStats() });
+        return;
+      }
+      if (pathname.startsWith('/api/unfolded-tools/cached/') && ['GET', 'HEAD'].includes(req.method)) {
+        await this.#serveCachedUnfoldedToolsIcon(pathname.slice('/api/unfolded-tools/cached/'.length), res, req.method === 'HEAD');
+        return;
+      }
+
       if (pathname === '/api/events' && req.method === 'GET') {
         res.writeHead(200, {
           'content-type': 'text/event-stream; charset=utf-8',
@@ -441,13 +557,14 @@ export class DashboardServer {
       if (pathname === '/api/backup' && req.method === 'GET') {
         const config = JSON.parse(await readFile(this.configFile, 'utf8'));
         const exportedAt = new Date();
-        const backup = createBackupPayload(config, this.settingsManager.backupForExport(), exportedAt);
+        const iconAssets = await this.#collectBackupIconAssets(config);
+        const backup = createBackupPayload(config, this.settingsManager.backupForExport(), exportedAt, iconAssets);
         log.info('Dashboard backup exported', { requestId, dashboards: backup.summary.dashboards, widgets: backup.summary.widgets, schemaVersion: backup.summary.schemaVersion });
         sendJsonDownload(res, backup, backupFilename(exportedAt));
         return;
       }
       if (pathname === '/api/backup/import' && req.method === 'POST') {
-        const body = JSON.parse(await readBody(req, 32 * 1024 * 1024));
+        const body = JSON.parse(await readBody(req, 64 * 1024 * 1024));
         const candidate = Object.prototype.hasOwnProperty.call(body || {}, 'backup') ? body.backup : body;
         const restoreSettings = body?.restoreSettings === true;
         const imported = extractBackupPayload(candidate);
@@ -459,11 +576,13 @@ export class DashboardServer {
 
         const currentConfig = JSON.parse(await readFile(this.configFile, 'utf8'));
         const safetyCreatedAt = new Date();
-        const safetyBackup = createBackupPayload(currentConfig, this.settingsManager.backupForExport(), safetyCreatedAt);
+        const safetyIconAssets = await this.#collectBackupIconAssets(currentConfig, true);
+        const safetyBackup = createBackupPayload(currentConfig, this.settingsManager.backupForExport(), safetyCreatedAt, safetyIconAssets);
         await mkdir(this.backupDir, { recursive: true });
         const safetyFilename = `pre-import-${backupTimestamp(safetyCreatedAt)}.json`;
         await writeJsonAtomic(path.join(this.backupDir, safetyFilename), safetyBackup);
 
+        const restoredIcons = await this.#restoreBackupIconAssets(imported.iconAssets);
         await writeJsonAtomic(this.configFile, imported.dashboardConfig);
         let settingsResult = { connectionChanged: false, listenerChanged: false, entitiesChanged: false };
         if (restoreSettings && imported.settings) settingsResult = await this.settingsManager.update(imported.settings);
@@ -471,7 +590,8 @@ export class DashboardServer {
         const summary = {
           dashboards: imported.dashboardConfig.dashboards.length,
           widgets: countDashboardWidgets(imported.dashboardConfig),
-          schemaVersion: Number(imported.dashboardConfig.version) || 0
+          schemaVersion: Number(imported.dashboardConfig.version) || 0,
+          restoredIcons
         };
         log.info('Dashboard backup imported', { requestId, ...summary, restoredSettings: restoreSettings && Boolean(imported.settings), safetyFilename });
         sendJson(res, 200, {
@@ -515,7 +635,9 @@ export class DashboardServer {
         const body = JSON.parse(await readBody(req));
         log.debug('Dashboard API request payload', { direction: 'dashboard_to_integration', requestId, pathname, payload: dashboardRequestPayload(pathname, body) });
         log.info('Dashboard settings update requested', { requestId, fields: Object.keys(body || {}) });
+        const previousUnfoldedToolsKey = String(this.settingsManager.get().unfoldedToolsApiKey || '');
         const result = await this.settingsManager.update(body);
+        if (previousUnfoldedToolsKey !== String(this.settingsManager.get().unfoldedToolsApiKey || '')) this.unfoldedToolsMetadataCache.clear();
         sendJson(res, 200, { ok: true, settings: this.settingsManager.forUi() });
         setImmediate(() => this.onSettingsChanged(result));
         return;
@@ -550,6 +672,169 @@ export class DashboardServer {
       if (statusCode >= 500) log.error('Dashboard HTTP request failed', { requestId, method: req.method, pathname, statusCode, error });
       else log.warn('Dashboard HTTP request rejected', { requestId, method: req.method, pathname, statusCode, error });
     }
+  }
+
+
+  async #unfoldedToolsFetchJson(endpoint, apiKey = '') {
+    const key = String(apiKey || this.settingsManager.get().unfoldedToolsApiKey || '').trim();
+    if (!key) throw Object.assign(new Error('Configure an unfolded.tools API key in Settings → Icons'), { statusCode: 401 });
+    const target = new URL(endpoint, UNFOLDED_TOOLS_API_BASE);
+    let response;
+    try {
+      response = await fetch(target, {
+        headers: { 'x-api-key': key, accept: 'application/json' },
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (error) {
+      throw Object.assign(new Error(`Unable to reach api.unfolded.tools: ${error.message}`), { statusCode: 502 });
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw unfoldedToolsApiError(response.status, payload);
+    return payload;
+  }
+
+  async #unfoldedToolsMetadata(categoryValue, countryValue = '') {
+    const category = normalizeUnfoldedToolsCategory(categoryValue);
+    const country = category === 'tv-logos' ? normalizeUnfoldedToolsCountry(countryValue) : '';
+    const cacheKey = `${category}:${country}`;
+    const cached = this.unfoldedToolsMetadataCache.get(cacheKey);
+    if (cached && Date.now() - cached.loadedAt < ICON_METADATA_TTL_MS) return cached;
+    const endpoint = category === 'tv-logos'
+      ? `/v1/icons/tv-logos/${encodeURIComponent(country)}?fields=id,name,url,category`
+      : `/v1/icons/${encodeURIComponent(category)}?fields=id,name,url,category`;
+    const payload = await this.#unfoldedToolsFetchJson(endpoint);
+    const icons = Array.isArray(payload?.icons) ? payload.icons.map((entry) => ({
+      id: String(entry?.id || ''),
+      name: String(entry?.name || entry?.id || 'Icon'),
+      category,
+      country,
+      thumbnailUrl: String(entry?.url || '')
+    })).filter((entry) => entry.id && entry.thumbnailUrl) : [];
+    icons.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+    const metadata = { icons, refreshedAt: payload?.refreshedAt || '', loadedAt: Date.now() };
+    this.unfoldedToolsMetadataCache.set(cacheKey, metadata);
+    return metadata;
+  }
+
+  async #cacheUnfoldedToolsIcon(body = {}) {
+    const category = normalizeUnfoldedToolsCategory(body.category);
+    const country = category === 'tv-logos' ? normalizeUnfoldedToolsCountry(body.country) : '';
+    const id = String(body.id || '').trim();
+    if (!id || id.length > 300) throw Object.assign(new Error('A valid icon ID is required'), { statusCode: 400 });
+    const metadata = await this.#unfoldedToolsMetadata(category, country);
+    const listed = metadata.icons.find((entry) => entry.id === id);
+    if (!listed) throw Object.assign(new Error('The selected unfolded.tools icon is no longer available'), { statusCode: 404 });
+    const name = listed.name;
+    const baseAsset = {
+      provider: 'unfolded_tools',
+      category,
+      country,
+      id,
+      name,
+      sourceUrl: listed.thumbnailUrl,
+      cachedAt: new Date().toISOString()
+    };
+    if (this.settingsManager.get().unfoldedToolsCacheSelected === false) {
+      return { ok: true, cached: false, url: listed.thumbnailUrl, asset: { ...baseAsset, localPath: '' } };
+    }
+
+    const endpoint = category === 'tv-logos'
+      ? `/v1/icons/tv-logos/${encodeURIComponent(country)}/${encodeURIComponent(name)}`
+      : `/v1/icons/${encodeURIComponent(category)}/${encodeURIComponent(id)}`;
+    const payload = await this.#unfoldedToolsFetchJson(endpoint);
+    const icon = payload?.icon || payload;
+    let image;
+    if (typeof icon?.base64 === 'string' && icon.base64.trim()) {
+      image = Buffer.from(icon.base64.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, ''), 'base64');
+    } else if (icon?.url || listed.thumbnailUrl) {
+      const imageUrl = new URL(icon?.url || listed.thumbnailUrl);
+      if (imageUrl.protocol !== 'https:' || !['unfolded.tools', 'www.unfolded.tools'].includes(imageUrl.hostname)) {
+        throw Object.assign(new Error('The selected icon returned an unsupported image URL'), { statusCode: 502 });
+      }
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(15000), redirect: 'follow' });
+      if (!response.ok) throw Object.assign(new Error(`Unable to download selected icon (${response.status})`), { statusCode: 502 });
+      image = Buffer.from(await response.arrayBuffer());
+    }
+    if (!image?.length) throw Object.assign(new Error('The selected icon did not contain image data'), { statusCode: 502 });
+    if (image.length > ICON_CACHE_MAX_BYTES) throw Object.assign(new Error('The selected icon is too large to cache'), { statusCode: 413 });
+    const filename = safeIconCacheFilename(category, country, id);
+    await mkdir(this.iconCacheDir, { recursive: true });
+    await writeFile(path.join(this.iconCacheDir, filename), image);
+    const localPath = cachedIconUrl(filename);
+    const asset = { ...baseAsset, fileName: filename, mimeType: 'image/webp', localPath, bytes: image.length };
+    return { ok: true, cached: true, url: localPath, asset };
+  }
+
+  async #serveCachedUnfoldedToolsIcon(rawFilename, res, headOnly = false) {
+    const filename = path.basename(decodeURIComponent(String(rawFilename || '')));
+    if (!/^[a-z0-9-]{1,80}\.(?:webp|png|svg)$/i.test(filename)) {
+      sendJson(res, 404, { error: 'Cached icon not found' });
+      return;
+    }
+    const file = path.join(this.iconCacheDir, filename);
+    let info;
+    try { info = await stat(file); } catch { sendJson(res, 404, { error: 'Cached icon not found' }); return; }
+    if (!info.isFile()) { sendJson(res, 404, { error: 'Cached icon not found' }); return; }
+    res.writeHead(200, {
+      'content-type': iconMimeFromFilename(filename),
+      'content-length': info.size,
+      'cache-control': 'public, max-age=31536000, immutable',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer'
+    });
+    if (headOnly) res.end();
+    else createReadStream(file).pipe(res);
+  }
+
+  async #unfoldedToolsCacheStats() {
+    let entries = [];
+    try { entries = await readdir(this.iconCacheDir, { withFileTypes: true }); } catch { return { icons: 0, bytes: 0 }; }
+    let icons = 0;
+    let bytes = 0;
+    for (const entry of entries) {
+      if (!entry.isFile() || !/\.(?:webp|png|svg)$/i.test(entry.name)) continue;
+      icons += 1;
+      try { bytes += (await stat(path.join(this.iconCacheDir, entry.name))).size; } catch {}
+    }
+    return { icons, bytes };
+  }
+
+  async #collectBackupIconAssets(config, forceInclude = false) {
+    if (!forceInclude && this.settingsManager.get().unfoldedToolsIncludeInBackup === false) return [];
+    const assets = config?.iconAssets && typeof config.iconAssets === 'object' ? Object.values(config.iconAssets) : [];
+    const result = [];
+    let totalBytes = 0;
+    for (const metadata of assets) {
+      if (metadata?.provider !== 'unfolded_tools' || !metadata?.fileName) continue;
+      const filename = path.basename(String(metadata.fileName));
+      if (!/^[a-z0-9-]{1,80}\.(?:webp|png|svg)$/i.test(filename)) continue;
+      let data;
+      try { data = await readFile(path.join(this.iconCacheDir, filename)); } catch { continue; }
+      if (!data.length || data.length > ICON_CACHE_MAX_BYTES || totalBytes + data.length > 28 * 1024 * 1024) continue;
+      totalBytes += data.length;
+      result.push({
+        fileName: filename,
+        mimeType: String(metadata.mimeType || iconMimeFromFilename(filename)),
+        data: data.toString('base64'),
+        metadata: { ...metadata, fileName: filename, localPath: cachedIconUrl(filename) }
+      });
+    }
+    return result;
+  }
+
+  async #restoreBackupIconAssets(iconAssets = []) {
+    if (!Array.isArray(iconAssets) || !iconAssets.length) return 0;
+    await mkdir(this.iconCacheDir, { recursive: true });
+    let restored = 0;
+    for (const entry of iconAssets.slice(0, 500)) {
+      const filename = path.basename(String(entry?.fileName || ''));
+      if (!/^[a-z0-9-]{1,80}\.(?:webp|png|svg)$/i.test(filename) || typeof entry?.data !== 'string') continue;
+      const data = Buffer.from(entry.data, 'base64');
+      if (!data.length || data.length > ICON_CACHE_MAX_BYTES) continue;
+      await writeFile(path.join(this.iconCacheDir, filename), data);
+      restored += 1;
+    }
+    return restored;
   }
 
 

@@ -179,12 +179,12 @@ if grep -Fq '?v=1.4.0' "${STAGE}/bin/public/index.html"; then
   printf 'Stale v1.4.0 frontend cache keys remain in index.html.\n' >&2
   exit 1
 fi
-if ! grep -Fq '"version": "1.11.0"' "${STAGE}/bin/package.json"; then
-  printf 'Packaged runtime version is not 1.11.0.\n' >&2
+if ! grep -Fq '"version": "1.12.1"' "${STAGE}/bin/package.json"; then
+  printf 'Packaged runtime version is not 1.12.1.\n' >&2
   exit 1
 fi
-if ! grep -Fq "version: '1.11.0'" "${STAGE}/bin/driver.js"; then
-  printf 'Driver startup metadata version is not 1.11.0.\n' >&2
+if ! grep -Fq "version: '1.12.1'" "${STAGE}/bin/driver.js"; then
+  printf 'Driver startup metadata version is not 1.12.1.\n' >&2
   exit 1
 fi
 
@@ -277,8 +277,8 @@ if ! grep -Fq 'normalized.version = 37' "${STAGE}/bin/public/app.js" || ! grep -
   printf 'v1.9 dashboard schema version 37 is missing.\n' >&2
   exit 1
 fi
-if ! grep -Fq '?v=1.11.0' "${STAGE}/bin/public/index.html"; then
-  printf 'v1.11.0 frontend cache keys are missing.\n' >&2
+if ! grep -Fq '?v=1.12.1' "${STAGE}/bin/public/index.html"; then
+  printf 'v1.12.1 frontend cache keys are missing.\n' >&2
   exit 1
 fi
 
@@ -325,7 +325,7 @@ for marker in 'const DASHBOARD_GRID_COLUMNS = 24' 'const migrateDashboardGrid = 
     exit 1
   fi
 done
-for marker in '--grid-columns: 24' 'repeat(var(--grid-columns), minmax(0, 1fr)) !important' '#frozen-dashboard-root' 'contain: strict' 'background-editor-live-preview' 'v1.11.0 square 24-column dashboard grid'; do
+for marker in '--grid-columns: 24' 'repeat(var(--grid-columns), minmax(0, 1fr)) !important' '#frozen-dashboard-root' 'contain: strict' 'background-editor-live-preview' 'v1.12.1 square 24-column dashboard grid'; do
   if ! grep -Fq -- "${marker}" "${STAGE}/bin/public/styles.css"; then
     printf 'v1.10 style marker is missing: %s\n' "${marker}" >&2
     exit 1
@@ -339,7 +339,7 @@ if ! grep -Fq '"driver_id": "uc_dashboard"' "${STAGE}/driver.json"; then
   printf 'Driver ID is not uc_dashboard.\n' >&2
   exit 1
 fi
-if ! grep -Fq 'href="/uc-dashboard.png?v=1.11.0"' "${STAGE}/bin/public/index.html"; then
+if ! grep -Fq 'href="/uc-dashboard.png?v=1.12.1"' "${STAGE}/bin/public/index.html"; then
   printf 'Dashboard favicon is missing from index.html.\n' >&2
   exit 1
 fi
@@ -349,7 +349,7 @@ for marker in "stage.style.overflowY = 'auto'" 'function runtimeWidgetSignature'
     exit 1
   fi
 done
-for marker in 'v1.11.0 display stability follow-up' 'contain: layout paint size'; do
+for marker in 'v1.12.1 display stability follow-up' 'contain: layout paint size'; do
   if ! grep -Fq "${marker}" "${STAGE}/bin/public/styles.css"; then
     printf 'Display-stability style marker is missing: %s\n' "${marker}" >&2
     exit 1
@@ -375,12 +375,38 @@ for marker in '.backup-current-summary' '.backup-import-preview' '.backup-import
   fi
 done
 
+# v1.11 unfolded.tools icon-library integration guards.
+for marker in 'unfoldedToolsPicker' 'open-unfolded-tools-picker' 'iconLibrarySettingsPanel' 'unfoldedToolsIconUrl' 'data-unfolded-tools-action="select"' 'iconAssets'; do
+  if ! grep -Fq "${marker}" "${STAGE}/bin/public/app.js"; then
+    printf 'unfolded.tools frontend marker is missing: %s\n' "${marker}" >&2
+    exit 1
+  fi
+done
+for marker in "pathname === '/api/unfolded-tools/icons'" "pathname === '/api/unfolded-tools/cache'" "pathname === '/api/unfolded-tools/countries'" '#collectBackupIconAssets' '#restoreBackupIconAssets' "'x-api-key': key"; do
+  if ! grep -Fq "${marker}" "${STAGE}/bin/dashboard-server.js"; then
+    printf 'unfolded.tools backend marker is missing: %s\n' "${marker}" >&2
+    exit 1
+  fi
+done
+for marker in 'unfoldedToolsApiKey' 'unfoldedToolsCacheSelected' 'unfoldedToolsIncludeInBackup'; do
+  if ! grep -Fq "${marker}" "${STAGE}/bin/settings-manager.js"; then
+    printf 'unfolded.tools settings marker is missing: %s\n' "${marker}" >&2
+    exit 1
+  fi
+done
+for marker in '.unfolded-tools-library-dialog' '.unfolded-tools-icon-grid' '.unfolded-tools-icon-card'; do
+  if ! grep -Fq "${marker}" "${STAGE}/bin/public/styles.css"; then
+    printf 'unfolded.tools style marker is missing: %s\n' "${marker}" >&2
+    exit 1
+  fi
+done
+
 node --input-type=module - "${STAGE}/bin/public/locales/dashboard-values.json" <<'NODE'
 import fs from 'node:fs';
 const file = process.argv[2];
 const dictionaries = JSON.parse(fs.readFileSync(file, 'utf8'));
 const languages = ['en', 'de', 'fr', 'es', 'it', 'nl'];
-const required = ['dashboard_menu', 'add_widget', 'lock_dashboard', 'unlock_dashboard', 'connected', 'disconnected', 'weather', 'humidity', 'wind', 'timer_finished', 'open', 'closed', 'on', 'off', 'choose_a_starting_point', 'color_and_image', 'overlay_save', 'apply_background', 'alert_sources_and_thresholds_are_configured_only_in_settings_notifications'];
+const required = ['dashboard_menu', 'add_widget', 'lock_dashboard', 'unlock_dashboard', 'connected', 'disconnected', 'weather', 'humidity', 'wind', 'timer_finished', 'open', 'closed', 'on', 'off', 'choose_a_starting_point', 'color_and_image', 'overlay_save', 'apply_background', 'alert_sources_and_thresholds_are_configured_only_in_settings_notifications', 'unfolded_tools_icon_library', 'connect_unfolded_tools_first', 'cached_icon_count'];
 const baseline = Object.keys(dictionaries.en || {}).sort();
 if (baseline.length < 400) throw new Error(`Expected at least 400 English dashboard translations, found ${baseline.length}`);
 for (const language of languages) {

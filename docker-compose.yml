@@ -1,6 +1,6 @@
 services:
   uc-dashboard:
-    build: .
+    image: ghcr.io/jstnjx/uc-dashboard:latest
     container_name: uc-dashboard
     network_mode: host
     volumes:

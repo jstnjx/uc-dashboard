@@ -20,7 +20,7 @@ const settingsManager = new SettingsManager({ configDir: CONFIG_DIR, onRemote: O
 await settingsManager.initialize();
 setLogLevel(settingsManager.get().logLevel);
 log.info('UC Dashboard starting', {
-  version: '1.11.0',
+  version: '1.12.1',
   deployment: ON_REMOTE ? 'remote' : 'external',
   dataDir: DATA_DIR,
   configDir: CONFIG_DIR,
