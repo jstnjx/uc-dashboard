@@ -1,0 +1,155 @@
+{
+  "version": 36,
+  "activeDashboardId": "main",
+  "widgetDefaults": {},
+  "ui": {
+    "statusBar": {
+      "visible": true,
+      "showSeconds": false,
+      "hour12": false,
+      "profileText": "W",
+      "background": "#000000",
+      "backgroundOpacity": 98,
+      "foreground": "#d0d0d0",
+      "height": 40,
+      "sticky": true,
+      "blur": 0,
+      "borderWidth": 0,
+      "borderColor": "#252525",
+      "radius": 0,
+      "shadow": false,
+      "timezone": "",
+      "dateStyle": "long",
+      "indicatorColor": "#d0d0d0",
+      "profileBackground": "#d0d0d0",
+      "profileForeground": "#000000",
+      "fontSize": 13,
+      "fontWeight": 550,
+      "iconSize": 19,
+      "horizontalPadding": 10,
+      "itemGap": 6,
+      "uppercase": false,
+      "indicatorStyle": "plain",
+      "layoutColumns": 7,
+      "layoutItems": [
+        {
+          "id": "status-time",
+          "type": "time",
+          "customText": "",
+          "entityId": "",
+          "entityDisplay": "name_state"
+        },
+        {
+          "id": "status-page",
+          "type": "page",
+          "customText": "",
+          "entityId": "",
+          "entityDisplay": "name_state"
+        },
+        {
+          "id": "status-connection",
+          "type": "connection_dot",
+          "customText": "",
+          "entityId": "",
+          "entityDisplay": "name_state"
+        },
+        {
+          "id": "status-charging",
+          "type": "charging_indicator",
+          "customText": "",
+          "entityId": "",
+          "entityDisplay": "name_state"
+        },
+        {
+          "id": "status-wifi",
+          "type": "wifi",
+          "customText": "",
+          "entityId": "",
+          "entityDisplay": "name_state"
+        },
+        {
+          "id": "status-alerts",
+          "type": "alerts",
+          "customText": "",
+          "entityId": "",
+          "entityDisplay": "name_state"
+        },
+        {
+          "id": "status-profile",
+          "type": "profile",
+          "customText": "",
+          "entityId": "",
+          "entityDisplay": "name_state"
+        }
+      ]
+    },
+    "screensaver": {
+      "enabled": false,
+      "timeoutSeconds": 300,
+      "mode": "clock",
+      "title": "",
+      "image": "",
+      "background": "#000000",
+      "foreground": "#ffffff",
+      "overlay": 25,
+      "showDate": true,
+      "showBattery": true,
+      "showConnection": false,
+      "movement": true,
+      "movementDuration": 180,
+      "contentScale": 100,
+      "clockSize": 100,
+      "showWakeHint": true,
+      "imageFit": "cover",
+      "triggers": [],
+      "widgetColumns": 2
+    },
+    "kiosk": {
+      "scaleToFit": false,
+      "allowUpscale": false,
+      "padding": 0,
+      "widthMode": "fill"
+    },
+    "navigation": {
+      "mode": "default",
+      "showIcons": true,
+      "showLabels": true,
+      "cardWidth": 152,
+      "transition": "slide"
+    },
+    "notifications": {
+      "autoLowBattery": true,
+      "batteryThreshold": 20,
+      "autoUnavailable": true,
+      "autoUpdates": true,
+      "acknowledgeMinutes": 60,
+      "dismissHours": 24,
+      "maxStatusAlerts": 100
+    }
+  },
+  "dashboards": [
+    {
+      "id": "main",
+      "name": "Living Room",
+      "background": {
+        "preset": "black",
+        "color": "#000000",
+        "image": "",
+        "overlay": 0,
+        "fit": "cover",
+        "position": "center center",
+        "fixed": true
+      },
+      "items": [],
+      "navIcon": "living",
+      "navColor": "#d0d0d0",
+      "pinHash": "",
+      "pinHint": "",
+      "relockEnabled": false,
+      "relockMinutes": 5
+    }
+  ],
+  "widgetPresets": [],
+  "widgetMasters": [],
+  "backgroundPresets": []
+}

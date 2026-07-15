@@ -1,0 +1,47 @@
+{
+  "driver_id": "uc_dashboard",
+  "version": "1.11.0",
+  "min_core_api": "0.20.1",
+  "name": {
+    "en": "UC Dashboard"
+  },
+  "icon": "custom:uc-dashboard.png",
+  "description": {
+    "en": "Hosts a responsive dashboard for entities configured on Remote Two or Remote 3."
+  },
+  "developer": {
+    "name": "jstnjx",
+    "url": "https://github.com/jstnjx"
+  },
+  "home_page": "https://github.com/jstnjx/uc-dashboard",
+  "setup_data_schema": {
+    "title": {
+      "en": "UC Dashboard"
+    },
+    "settings": [
+      {
+        "id": "dashboard-info",
+        "label": {
+          "en": "Remote Core API access"
+        },
+        "field": {
+          "label": {
+            "value": {
+              "en": "Enter the PIN currently shown for the Remote web configurator. The integration signs in as web-configurator once, creates its own Core API key, and stores that key in its private configuration directory."
+            }
+          }
+        }
+      },
+      {
+        "id": "pin",
+        "label": {
+          "en": "Web configurator PIN"
+        },
+        "field": {
+          "password": {}
+        }
+      }
+    ]
+  },
+  "release_date": "2026-07-15"
+}

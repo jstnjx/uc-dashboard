@@ -1,0 +1,7 @@
+.git
+.github
+builds
+config/*.json
+data/*.json
+*.tar.gz
+*.zip

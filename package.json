@@ -1,0 +1,17 @@
+{
+  "name": "uc-dashboard",
+  "version": "1.11.0",
+  "private": true,
+  "description": "UC Dashboard integration driver for Remote Two and Remote 3",
+  "type": "module",
+  "main": "driver.js",
+  "scripts": {
+    "start": "node driver.js",
+    "check": "node --check driver.js && node --check logger.js && node --check core-client.js && node --check dashboard-server.js && node --check integration-server.js && node --check core-auth.js && node --check settings-manager.js && node --check simple-ws-server.js && node --check public/camera-player.js && node --check public/material-symbols-catalog.js && node --check public/app.js",
+    "build:integration": "npm run build:frontend && bash scripts/build-integration.sh",
+    "build:frontend": "npx --yes esbuild public/app.js --bundle --format=iife --target=chrome60 --outfile=public/app.bundle.js --minify --legal-comments=none"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "UC Dashboard",
+  "short_name": "UC Dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/uc-dashboard.png",
+      "sizes": "90x90",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

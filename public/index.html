@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="color-scheme" content="dark" />
+    <title>UC Dashboard</title>
+    <link rel="icon" type="image/png" sizes="90x90" href="/uc-dashboard.png?v=1.11.0" />
+    <link rel="apple-touch-icon" href="/uc-dashboard.png?v=1.11.0" />
+    <link rel="manifest" href="/manifest.webmanifest?v=1.11.0" />
+    <link rel="preload" href="/assets/fonts/material-symbols-rounded.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/vendor/swiper-bundle.min.css?v=14.0.5" />
+    <link rel="stylesheet" href="/assets/fonts/fonts.css?v=1.11.0" />
+    <link rel="stylesheet" href="/styles.css?v=1.11.0" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="drawer-root"></div>
+    <div id="modal-root"></div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script src="/vendor/swiper-element-bundle.min.js?v=14.0.5"></script>
+    <script>
+      window.__ucDashboardBootTimer = setTimeout(function () {
+        var root = document.getElementById('app');
+        if (!root || root.children.length) return;
+        var language = (navigator.language || 'en').toLowerCase().split('-')[0];
+        var copy = {
+          en: ['Dashboard could not start', 'Update Android System WebView / Fully Kiosk Browser, then reload this page.', 'Reload'],
+          de: ['Dashboard konnte nicht gestartet werden', 'Aktualisiere Android System WebView / Fully Kiosk Browser und lade diese Seite neu.', 'Neu laden'],
+          fr: ['Le tableau de bord n’a pas pu démarrer', 'Mettez à jour Android System WebView / Fully Kiosk Browser, puis rechargez cette page.', 'Recharger'],
+          es: ['No se pudo iniciar el panel', 'Actualiza Android System WebView / Fully Kiosk Browser y vuelve a cargar esta página.', 'Recargar'],
+          it: ['Impossibile avviare la dashboard', 'Aggiorna Android System WebView / Fully Kiosk Browser, quindi ricarica questa pagina.', 'Ricarica'],
+          nl: ['Dashboard kon niet starten', 'Werk Android System WebView / Fully Kiosk Browser bij en laad deze pagina opnieuw.', 'Opnieuw laden']
+        }[language] || null;
+        copy = copy || ['Dashboard could not start', 'Update Android System WebView / Fully Kiosk Browser, then reload this page.', 'Reload'];
+        root.innerHTML = '<main class="compatibility-error"><h1>' + copy[0] + '</h1><p>' + copy[1] + '</p><button onclick="location.reload()">' + copy[2] + '</button></main>';
+      }, 7000);
+      window.addEventListener('error', function (event) { document.documentElement.dataset.bootError = 'true'; console.error(event.error || event.message); });
+    </script>
+    <script defer src="/app.bundle.js?v=1.11.0"></script>
+  </body>
+</html>

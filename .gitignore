@@ -1,0 +1,7 @@
+builds/
+config/settings.json
+data/dashboard.json.tmp
+*.tar.gz
+*.zip
+*.sha256
+.DS_Store
