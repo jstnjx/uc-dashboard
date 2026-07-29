@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="$(node -p "require('${ROOT}/package.json').version")"
+VERSION="$(node -p "require('${ROOT}/driver.json').version")"
 NAME="uc-dashboard-${VERSION}"
 STAGE="${ROOT}/builds/${NAME}"
 ARCHIVE="${ROOT}/builds/${NAME}.tar.gz"
@@ -13,13 +13,11 @@ cp "${ROOT}/driver.json" "${STAGE}/driver.json"
 cp "${ROOT}/driver.json" "${STAGE}/bin/driver.json"
 cp "${ROOT}/uc-dashboard.png" "${STAGE}/uc-dashboard.png"
 cp "${ROOT}/package.json" "${STAGE}/bin/package.json"
-cp "${ROOT}/driver.js" "${ROOT}/core-client.js" "${ROOT}/dashboard-server.js" "${ROOT}/integration-server.js" "${ROOT}/core-auth.js" "${ROOT}/settings-manager.js" "${ROOT}/logger.js" "${ROOT}/simple-ws-server.js" "${STAGE}/bin/"
+cp "${ROOT}/driver.js" "${ROOT}/core-client.js" "${ROOT}/dashboard-server.js" "${ROOT}/integration-server.js" "${ROOT}/core-auth.js" "${ROOT}/settings-manager.js" "${ROOT}/logger.js" "${ROOT}/simple-ws-server.js" "${ROOT}/integration-info.js" "${STAGE}/bin/"
 cp -R "${ROOT}/public/." "${STAGE}/bin/public/"
 
-# Keep release metadata and frontend cache keys synchronized with package.json.
-VERSION_ESCAPED="$(printf '%s' "${VERSION}" | sed 's/[.[\*^$()+?{|]/\\&/g')"
-sed -E -i "s/version: '[0-9]+\.[0-9]+\.[0-9]+'/version: '${VERSION}'/" "${STAGE}/bin/driver.js"
-sed -E -i "s/\?v=[0-9]+\.[0-9]+\.[0-9]+/?v=${VERSION}/g" "${STAGE}/bin/public/index.html"
+# Frontend cache keys are generated from driver.json for the packaged archive.
+sed -i "s/__UC_DASHBOARD_VERSION__/${VERSION}/g" "${STAGE}/bin/public/index.html"
 
 # Stable-release packaging guard: fail instead of producing an incomplete archive.
 REQUIRED_ASSETS=(
@@ -184,13 +182,13 @@ if grep -Fq '?v=1.4.0' "${STAGE}/bin/public/index.html"; then
   printf 'Stale v1.4.0 frontend cache keys remain in index.html.\n' >&2
   exit 1
 fi
-PACKAGED_VERSION="$(node -p "require('${STAGE}/bin/package.json').version")"
+PACKAGED_VERSION="$(node -p "require('${STAGE}/bin/driver.json').version")"
 if [[ "${PACKAGED_VERSION}" != "${VERSION}" ]]; then
-  printf 'Packaged runtime version mismatch: expected %s, got %s.\n' "${VERSION}" "${PACKAGED_VERSION}" >&2
+  printf 'Packaged driver version mismatch: expected %s, got %s.\n' "${VERSION}" "${PACKAGED_VERSION}" >&2
   exit 1
 fi
-if ! grep -Fq "version: '${VERSION}'" "${STAGE}/bin/driver.js"; then
-  printf 'Driver startup metadata version mismatch: expected %s.\n' "${VERSION}" >&2
+if ! grep -Fq 'INTEGRATION_VERSION' "${STAGE}/bin/driver.js" "${STAGE}/bin/dashboard-server.js"; then
+  printf 'Packaged runtime does not source its version from driver.json.\n' >&2
   exit 1
 fi
 

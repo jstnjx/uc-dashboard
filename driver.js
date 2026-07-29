@@ -5,6 +5,7 @@ import { DashboardServer } from './dashboard-server.js';
 import { IntegrationServer } from './integration-server.js';
 import { SettingsManager } from './settings-manager.js';
 import { createLogger, setLogLevel } from './logger.js';
+import { INTEGRATION_VERSION } from './integration-info.js';
 
 const log = createLogger('driver');
 
@@ -20,7 +21,7 @@ const settingsManager = new SettingsManager({ configDir: CONFIG_DIR, onRemote: O
 await settingsManager.initialize();
 setLogLevel(settingsManager.get().logLevel);
 log.info('UC Dashboard starting', {
-  version: '1.12.1',
+  version: INTEGRATION_VERSION,
   deployment: ON_REMOTE ? 'remote' : 'external',
   dataDir: DATA_DIR,
   configDir: CONFIG_DIR,
@@ -38,6 +39,7 @@ function runtime() {
   const settings = settingsManager.get();
   return {
     ...coreClient.runtime(),
+    applicationVersion: INTEGRATION_VERSION,
     deployment: ON_REMOTE ? 'remote' : 'external',
     onRemote: ON_REMOTE,
     dashboardListening: Boolean(dashboardServer?.listening),

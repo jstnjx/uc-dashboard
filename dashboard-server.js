@@ -6,9 +6,9 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createLogger } from './logger.js';
+import { INTEGRATION_VERSION } from './integration-info.js';
 
 const log = createLogger('dashboard-server');
-const APP_VERSION = '1.12.1';
 const BACKUP_FORMAT = 'uc-dashboard-backup';
 const BACKUP_FORMAT_VERSION = 1;
 const UNFOLDED_TOOLS_API_BASE = process.env.UNFOLDED_TOOLS_API_BASE || 'https://api.unfolded.tools';
@@ -95,7 +95,7 @@ function createBackupPayload(config, settings, exportedAt = new Date(), iconAsse
   return {
     format: BACKUP_FORMAT,
     formatVersion: BACKUP_FORMAT_VERSION,
-    application: { id: 'uc_dashboard', name: 'UC Dashboard', version: APP_VERSION },
+    application: { id: 'uc_dashboard', name: 'UC Dashboard', version: INTEGRATION_VERSION },
     exportedAt: exportedAt.toISOString(),
     dashboardConfig: config,
     settings,

@@ -1,6 +1,5 @@
 {
   "name": "uc-dashboard",
-  "version": "1.12.3",
   "private": true,
   "description": "UC Dashboard integration driver for Remote Two and Remote 3",
   "type": "module",
