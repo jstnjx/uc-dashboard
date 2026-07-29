@@ -16,6 +16,11 @@ cp "${ROOT}/package.json" "${STAGE}/bin/package.json"
 cp "${ROOT}/driver.js" "${ROOT}/core-client.js" "${ROOT}/dashboard-server.js" "${ROOT}/integration-server.js" "${ROOT}/core-auth.js" "${ROOT}/settings-manager.js" "${ROOT}/logger.js" "${ROOT}/simple-ws-server.js" "${STAGE}/bin/"
 cp -R "${ROOT}/public/." "${STAGE}/bin/public/"
 
+# Keep release metadata and frontend cache keys synchronized with package.json.
+VERSION_ESCAPED="$(printf '%s' "${VERSION}" | sed 's/[.[\*^$()+?{|]/\\&/g')"
+sed -E -i "s/version: '[0-9]+\.[0-9]+\.[0-9]+'/version: '${VERSION}'/" "${STAGE}/bin/driver.js"
+sed -E -i "s/\?v=[0-9]+\.[0-9]+\.[0-9]+/?v=${VERSION}/g" "${STAGE}/bin/public/index.html"
+
 # Stable-release packaging guard: fail instead of producing an incomplete archive.
 REQUIRED_ASSETS=(
   "bin/logger.js"
@@ -179,12 +184,13 @@ if grep -Fq '?v=1.4.0' "${STAGE}/bin/public/index.html"; then
   printf 'Stale v1.4.0 frontend cache keys remain in index.html.\n' >&2
   exit 1
 fi
-if ! grep -Fq '"version": "1.12.1"' "${STAGE}/bin/package.json"; then
-  printf 'Packaged runtime version is not 1.12.1.\n' >&2
+PACKAGED_VERSION="$(node -p "require('${STAGE}/bin/package.json').version")"
+if [[ "${PACKAGED_VERSION}" != "${VERSION}" ]]; then
+  printf 'Packaged runtime version mismatch: expected %s, got %s.\n' "${VERSION}" "${PACKAGED_VERSION}" >&2
   exit 1
 fi
-if ! grep -Fq "version: '1.12.1'" "${STAGE}/bin/driver.js"; then
-  printf 'Driver startup metadata version is not 1.12.1.\n' >&2
+if ! grep -Fq "version: '${VERSION}'" "${STAGE}/bin/driver.js"; then
+  printf 'Driver startup metadata version mismatch: expected %s.\n' "${VERSION}" >&2
   exit 1
 fi
 
@@ -277,8 +283,8 @@ if ! grep -Fq 'normalized.version = 37' "${STAGE}/bin/public/app.js" || ! grep -
   printf 'v1.9 dashboard schema version 37 is missing.\n' >&2
   exit 1
 fi
-if ! grep -Fq '?v=1.12.1' "${STAGE}/bin/public/index.html"; then
-  printf 'v1.12.1 frontend cache keys are missing.\n' >&2
+if ! grep -Fq "?v=${VERSION}" "${STAGE}/bin/public/index.html"; then
+  printf 'Frontend cache keys for version %s are missing.\n' "${VERSION}" >&2
   exit 1
 fi
 
@@ -325,7 +331,7 @@ for marker in 'const DASHBOARD_GRID_COLUMNS = 24' 'const migrateDashboardGrid = 
     exit 1
   fi
 done
-for marker in '--grid-columns: 24' 'repeat(var(--grid-columns), minmax(0, 1fr)) !important' '#frozen-dashboard-root' 'contain: strict' 'background-editor-live-preview' 'v1.12.1 square 24-column dashboard grid'; do
+for marker in '--grid-columns: 24' 'repeat(var(--grid-columns), minmax(0, 1fr)) !important' '#frozen-dashboard-root' 'contain: strict' 'background-editor-live-preview' 'square 24-column dashboard grid'; do
   if ! grep -Fq -- "${marker}" "${STAGE}/bin/public/styles.css"; then
     printf 'v1.10 style marker is missing: %s\n' "${marker}" >&2
     exit 1
@@ -339,8 +345,8 @@ if ! grep -Fq '"driver_id": "uc_dashboard"' "${STAGE}/driver.json"; then
   printf 'Driver ID is not uc_dashboard.\n' >&2
   exit 1
 fi
-if ! grep -Fq 'href="/uc-dashboard.png?v=1.12.1"' "${STAGE}/bin/public/index.html"; then
-  printf 'Dashboard favicon is missing from index.html.\n' >&2
+if ! grep -Fq "href=\"/uc-dashboard.png?v=${VERSION}\"" "${STAGE}/bin/public/index.html"; then
+  printf 'Dashboard favicon cache key for version %s is missing from index.html.\n' "${VERSION}" >&2
   exit 1
 fi
 for marker in "stage.style.overflowY = 'auto'" 'function runtimeWidgetSignature' 'node.dataset.runtimeSignature === signature' 'scrolling="no"'; do
@@ -349,7 +355,7 @@ for marker in "stage.style.overflowY = 'auto'" 'function runtimeWidgetSignature'
     exit 1
   fi
 done
-for marker in 'v1.12.1 display stability follow-up' 'contain: layout paint size'; do
+for marker in 'display stability follow-up' 'contain: layout paint size'; do
   if ! grep -Fq "${marker}" "${STAGE}/bin/public/styles.css"; then
     printf 'Display-stability style marker is missing: %s\n' "${marker}" >&2
     exit 1
