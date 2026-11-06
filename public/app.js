@@ -212,11 +212,11 @@ const SYSTEM_WIDGETS = {
   },
   conditional: {
     label: 'Conditional container',
-    description: 'Show nested widgets only when an entity condition matches.',
+    description: 'Build activity-aware layouts with independent widget conditions and reusable grid slots.',
     icon: 'conditional',
     settings: {
       title: 'Conditional group', conditionEntityId: '', operator: 'equals', compareValue: 'ON',
-      invert: false, hideWhenFalse: false, falseText: 'Condition not met', items: []
+      invert: false, hideWhenFalse: false, falseText: 'Condition not met', layoutMode: 'auto', gridColumns: '24', gridRows: '12', gridGap: '8', items: []
     }
   },
   divider_horizontal: {
@@ -4574,10 +4574,43 @@ function conditionMatches(settings) {
   return settings.invert ? !result : result;
 }
 
+function conditionalFixedGrid(settings) {
+  return {
+    columns: Math.max(1, Math.min(24, Number(settings?.gridColumns) || 24)),
+    rows: Math.max(1, Math.min(48, Number(settings?.gridRows) || 12)),
+    gap: Math.max(0, Math.min(32, Number(settings?.gridGap) || 0))
+  };
+}
+
+function conditionalSlot(child, index, settings) {
+  const { columns, rows } = conditionalFixedGrid(settings);
+  const source = child?.settings?.conditionalSlot || {};
+  const half = Math.max(1, Math.floor(columns / 2));
+  const fallbackX = (index % 2) * half;
+  const fallbackY = Math.floor(index / 2) * Math.min(rows, 6);
+  const w = Math.max(1, Math.min(columns, Number(source.w) || Math.min(12, columns)));
+  const h = Math.max(1, Math.min(rows, Number(source.h) || Math.min(6, rows)));
+  return {
+    x: Math.max(0, Math.min(columns - w, Number(source.x ?? fallbackX) || 0)),
+    y: Math.max(0, Math.min(rows - h, Number(source.y ?? fallbackY) || 0)),
+    w, h
+  };
+}
+
+function conditionalChildVisible(child) {
+  if (!widgetConditionsMatch(child)) return false;
+  const condition = child?.settings?.conditionalDisplay || {};
+  if (!condition.entityId) return true;
+  const entity = state.entities.get(condition.entityId);
+  if (!entity) return false;
+  const op = ['truthy','falsy','equals','not_equals','contains'].includes(condition.operator) ? condition.operator : 'truthy';
+  return compareRule(conditionValue(entity), op, String(condition.value ?? 'ON'));
+}
+
 function renderNestedWidget(item, options = {}) {
   const isSystem = item.kind === 'system';
   const entity = isSystem ? null : entityForItem(item);
-  const visible = widgetConditionsMatch(item);
+  const visible = options.fixedSlot ? conditionalChildVisible(item) : widgetConditionsMatch(item);
   const unavailableMode = widgetUnavailableMode(item);
   if ((!visible || unavailableMode === 'hide') && !state.editMode) { const fallback=normalizeFallback(item.settings?.fallback); if(fallback.mode==='hide'||fallback.mode==='none')return ''; }
   const standalone = Boolean(options.standalone);
@@ -4587,7 +4620,7 @@ function renderNestedWidget(item, options = {}) {
   const rows = Math.max(1, Number(options.rows) || 1);
   const width = Math.max(1, Math.min(columns, Number(item.w) || Math.min(3, columns)));
   const height = Math.max(1, Math.min(rows, Number(item.h) || Math.min(2, rows)));
-  const layoutStyle = standalone ? `grid-column:span ${width};grid-row:span ${height}` : '';
+  const layoutStyle = options.fixedSlot ? `grid-column:${options.fixedSlot.x + 1} / span ${options.fixedSlot.w};grid-row:${options.fixedSlot.y + 1} / span ${options.fixedSlot.h}` : standalone ? `grid-column:span ${width};grid-row:span ${height}` : '';
   const isContainer = isSystem && CONTAINER_WIDGET_TYPES.has(item.widgetType);
   const tools = state.editMode && !state.renderingPreview && !options.suppressTools ? `<div class="widget-tools nested-tools">${isContainer ? `<button class="widget-tool" data-action="edit-container-contents" data-item-id="${escapeHtml(item.id)}" title="Edit contents">${materialSymbol('account_tree',15)}</button><button class="widget-tool" data-action="toggle-container-collapse" data-item-id="${escapeHtml(item.id)}" title="Collapse or expand">${materialSymbol(state.collapsedContainers.has(item.id) ? 'unfold_more' : 'unfold_less',15)}</button>` : ''}<button class="widget-tool" data-action="move-nested-widget" data-item-id="${escapeHtml(item.id)}" data-direction="-1" title="Move earlier">${materialSymbol('arrow_back',15)}</button><button class="widget-tool" data-action="move-nested-widget" data-item-id="${escapeHtml(item.id)}" data-direction="1" title="Move later">${materialSymbol('arrow_forward',15)}</button><button class="widget-tool" data-action="configure-widget" data-item-id="${escapeHtml(item.id)}" title="Customize ${escapeHtml(isSystem ? SYSTEM_WIDGETS[item.widgetType]?.label || item.widgetType : localName(entity?.name, entity?.entity_id || 'widget'))}">${icon('tune', 15)}</button><button class="widget-tool" data-action="copy-dashboard-widget" data-item-id="${escapeHtml(item.id)}" title="Copy widget">${materialSymbol('content_copy',15)}</button><button class="widget-tool danger" data-action="remove-widget" data-item-id="${escapeHtml(item.id)}" title="Remove">${icon('trash', 15)}</button></div>` : '';
   const nativeContent = isSystem ? renderSystemWidget(item, { nestedDepth: depth }) : renderEntityWidget(entity, item);
@@ -4606,22 +4639,40 @@ function renderNestedWidget(item, options = {}) {
 }
 
 function renderConditionalContainer(item, settings, context = {}) {
+  const fixed = settings.layoutMode === 'fixed';
   const configured = Boolean(settings.conditionEntityId);
-  const matches = configured ? conditionMatches(settings) : true;
-  const runtimeHidden = configured && !matches && settings.hideWhenFalse;
-  if (runtimeHidden && !state.editMode) return `<div class="conditional-hidden" aria-hidden="true"></div>`;
+  const matches = fixed || !configured || conditionMatches(settings);
+  const runtimeHidden = !fixed && configured && !matches && settings.hideWhenFalse;
+  if (runtimeHidden && !state.editMode) return '<div class="conditional-hidden" aria-hidden="true"></div>';
   const children = Array.isArray(settings.items) ? settings.items : [];
-  if (state.editMode && state.collapsedContainers.has(item.id)) return `<div class="container-collapsed-placeholder">Conditional contents collapsed in edit mode · ${children.length} widgets</div>`;
-  const columns = Math.max(1, Math.min(12, Number(item.w) || 8));
-  const rows = Math.max(1, Number(item.h) || 5);
-  const status = !configured ? 'Configure condition' : matches ? 'Condition matched' : 'Hidden at runtime';
-  const editBadge = state.editMode && !state.renderingPreview ? `<div class="conditional-edit-badge">${materialSymbol('rule', 15)}<span>${marquee(settings.title || 'Conditional group')}</span><small>${escapeHtml(status)}</small></div>` : '';
-  const body = !configured
-    ? `<div class="conditional-message configure-message">${icon('tune', 28)}<span>Configure the condition and choose contained widgets.</span></div>`
-    : matches || state.editMode
-      ? `<div class="conditional-grid" style="--conditional-columns:${columns};--conditional-rows:${rows}">${children.length ? children.map((child) => renderNestedWidget(child, { standalone: true, columns, rows, depth: Math.max(0, Number(context.nestedDepth) || 0) + 1 })).join('') : '<div class="empty-inline">Add widgets to this condition in its settings.</div>'}</div>`
-      : `<div class="conditional-message">${marquee(settings.falseText || 'Condition not met')}</div>`;
-  return `<div class="conditional-container conditional-transparent ${matches ? 'condition-true' : 'condition-false'} ${!configured ? 'condition-unconfigured' : ''}">${editBadge}${body}</div>`;
+  if (state.editMode && state.collapsedContainers.has(item.id)) return '<div class="container-collapsed-placeholder">Conditional contents collapsed in edit mode · ' + children.length + ' widgets</div>';
+  const fixedGrid = conditionalFixedGrid(settings);
+  const columns = fixed ? fixedGrid.columns : Math.max(1, Math.min(12, Number(item.w) || 8));
+  const rows = fixed ? fixedGrid.rows : Math.max(1, Number(item.h) || 5);
+  const status = fixed ? 'Fixed layout · ' + children.length + ' widgets'
+    : !configured ? 'Configure condition' : matches ? 'Condition matched' : 'Hidden at runtime';
+  const editBadge = state.editMode && !state.renderingPreview
+    ? '<div class="conditional-edit-badge">' + materialSymbol('rule', 15) + '<span>' + marquee(settings.title || 'Conditional group') + '</span><small>' + escapeHtml(status) + '</small></div>' : '';
+  const nestedDepth = Math.max(0, Number(context.nestedDepth) || 0) + 1;
+  const renderChildren = () => children.map((child, index) => {
+    if (fixed && !state.editMode && !conditionalChildVisible(child)) return '';
+    return renderNestedWidget(child, {
+      standalone: true, columns, rows, depth: nestedDepth,
+      ...(fixed ? { fixedSlot: conditionalSlot(child, index, settings) } : {})
+    });
+  }).join('');
+  const body = fixed || configured
+    ? matches || state.editMode
+      ? '<div class="conditional-grid ' + (fixed ? 'fixed-layout' : '') +
+        '" style="--conditional-columns:' + columns + ';--conditional-rows:' + rows +
+        ';--conditional-gap:' + (fixed ? fixedGrid.gap : 10) + 'px">' +
+        (children.length ? renderChildren() : '<div class="empty-inline">Add widgets in the Conditional card settings.</div>') + '</div>'
+      : '<div class="conditional-message">' + marquee(settings.falseText || 'Condition not met') + '</div>'
+    : '<div class="conditional-message configure-message">' + icon('tune', 28) + '<span>Configure the condition and choose contained widgets.</span></div>';
+  return '<div class="conditional-container conditional-transparent ' +
+    (fixed ? 'conditional-fixed' : '') + ' ' +
+    (matches ? 'condition-true' : 'condition-false') + ' ' +
+    (!configured && !fixed ? 'condition-unconfigured' : '') + '">' + editBadge + body + '</div>';
 }
 
 function renderCustomCodeWidget(item, settings) {
