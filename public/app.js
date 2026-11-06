@@ -207,7 +207,7 @@ const SYSTEM_WIDGETS = {
     icon: 'camera',
     settings: {
       title: 'Camera', sourceUrl: '', sourceType: 'auto', go2rtcApiUrl: '', go2rtcStreamName: '', go2rtcMode: 'webrtc,webrtc/tcp,mse,hls,mjpeg,mp4', posterUrl: '', showTitle: true,
-      autoplay: true, muted: true, controls: false, objectFit: 'cover', cameraZoom: '112', refreshSeconds: '10'
+      autoplay: true, muted: true, controls: false, objectFit: 'cover', objectPosition: 'center', playerMode: 'auto', nativeZoom: '100', cameraZoom: '100', iframeHideControls: false, frameBorder: false, refreshSeconds: '10'
     }
   },
   conditional: {
@@ -4531,25 +4531,57 @@ function renderCameraWidget(item, settings) {
   const imageUrl = `/api/camera-image?widget=${encodeURIComponent(item.id)}&t=${Math.floor(Date.now() / (Math.max(2, Number(settings.refreshSeconds) || 10) * 1000))}`;
   const poster = settings.posterUrl ? escapeHtml(settings.posterUrl) : '';
   let media;
+  const fit = ['contain','cover','fill'].includes(settings.objectFit) ? settings.objectFit : 'cover';
+  const position = ['center','left center','right center','center top','center bottom'].includes(settings.objectPosition) ? settings.objectPosition : 'center';
+  const nativeZoom = Math.max(100, Math.min(160, Number(settings.nativeZoom) || 100)) / 100;
+  const iframeZoom = Math.max(100, Math.min(160, Number(settings.cameraZoom) || 100)) / 100;
+  const playerMode = ['auto','native','iframe'].includes(settings.playerMode) ? settings.playerMode : 'auto';
+  const frameStyle = '--camera-object-fit:' + fit + ';--camera-object-position:' + position +
+    ';--camera-native-zoom:' + nativeZoom + ';--camera-iframe-zoom:' + iframeZoom;
   const explicitGo2Rtc = Boolean(String(settings.go2rtcStreamName || '').trim() && String(settings.go2rtcApiUrl || '').trim());
   const parsedGo2Rtc = parseGo2RtcSource(settings);
   if (!settings.sourceUrl && !explicitGo2Rtc) {
     media = `<div class="camera-placeholder">${renderWidgetIcon(item, 'camera', 64)}<span>Configure a stream URL, or provide a go2rtc API URL and stream name.</span></div>`;
   } else if (type === 'image') {
-    media = `<img src="${imageUrl}" alt="${escapeHtml(settings.title || 'Camera')}" style="object-fit:${escapeHtml(settings.objectFit || 'cover')}" referrerpolicy="no-referrer" data-camera-session data-camera-image data-widget-id="${escapeHtml(item.id)}" data-refresh-seconds="${escapeHtml(settings.refreshSeconds || 10)}">`;
+    media = `<img src="${imageUrl}" alt="${escapeHtml(settings.title || 'Camera')}" style="object-fit:${fit};object-position:${escapeHtml(position)};transform:scale(${nativeZoom});transform-origin:${escapeHtml(position)}" referrerpolicy="no-referrer" data-camera-session data-camera-image data-widget-id="${escapeHtml(item.id)}" data-refresh-seconds="${escapeHtml(settings.refreshSeconds || 10)}">`;
   } else if (type === 'go2rtc' || parsedGo2Rtc) {
     const playerUrl = go2rtcPlayerUrl(settings);
+    const wsUrl = go2rtcWebSocketUrl(settings);
     const fallbackUrl = go2rtcFallbackUrl(settings);
-    const zoom = Math.max(100, Math.min(160, Number(settings.cameraZoom) || 112)) / 100;
-    media = playerUrl ? `<div class="go2rtc-embed ${settings.controls ? 'show-controls' : 'hide-controls'} ${settings.muted !== false ? 'is-muted' : ''}" style="--camera-zoom:${zoom}" data-camera-session data-camera-widget-id="${escapeHtml(item.id)}"><iframe src="${escapeHtml(playerUrl)}" title="${escapeHtml(translateDashboardText(settings.title || 'Camera'))}" allow="autoplay; fullscreen; picture-in-picture" loading="eager" referrerpolicy="no-referrer" scrolling="no" frameborder="0" data-camera-native-frame></iframe><div class="camera-fallback-actions"><a href="${escapeHtml(playerUrl)}" target="_blank" rel="noopener">Open player</a>${fallbackUrl ? `<a href="${escapeHtml(fallbackUrl)}" target="_blank" rel="noopener">Open MP4 fallback</a>` : ''}</div></div>` : `<div class="camera-placeholder">${renderWidgetIcon(item, 'camera', 64)}<span>Unable to derive the go2rtc stream name or API URL.</span></div>`;
+    const embedded = playerUrl
+      ? '<div class="go2rtc-embed camera-iframe-mode ' +
+        (settings.iframeHideControls ? 'hide-controls' : 'show-controls') +
+        '" style="--camera-zoom:' + iframeZoom + '" data-camera-session data-camera-widget-id="' +
+        escapeHtml(item.id) + '"><iframe src="' + escapeHtml(playerUrl) +
+        '" title="' + escapeHtml(translateDashboardText(settings.title || 'Camera')) +
+        '" allow="autoplay; fullscreen; picture-in-picture" loading="eager" referrerpolicy="no-referrer" scrolling="no" frameborder="0" data-camera-native-frame></iframe>' +
+        '<div class="camera-fallback-actions"><a href="' + escapeHtml(playerUrl) +
+        '" target="_blank" rel="noopener">Open player</a>' +
+        (fallbackUrl ? '<a href="' + escapeHtml(fallbackUrl) + '" target="_blank" rel="noopener">Open MP4 fallback</a>' : '') +
+        '</div></div>'
+      : '';
+    const nativePlayer = wsUrl
+      ? '<uc-camera-player class="camera-native-player" data-camera-session engine="go2rtc" src="' +
+        escapeHtml(wsUrl) + '" modes="' + escapeHtml(settings.go2rtcMode || 'webrtc,webrtc/tcp,mse') +
+        '" ' + (poster ? 'poster="' + poster + '" ' : '') +
+        (settings.autoplay !== false ? 'autoplay ' : '') +
+        (settings.muted !== false ? 'muted ' : '') +
+        (settings.controls ? 'controls ' : '') +
+        'object-fit="' + fit + '" data-player-mode="' + playerMode +
+        '" data-fallback-url="' + escapeHtml(playerMode === 'auto' ? playerUrl : '') +
+        '" data-iframe-hide-controls="' + (settings.iframeHideControls ? 'true' : 'false') +
+        '" data-iframe-zoom="' + iframeZoom + '"></uc-camera-player>'
+      : '';
+    media = playerMode === 'iframe' ? embedded : nativePlayer || embedded;
+    if (!media) media = '<div class="camera-placeholder">Unable to derive the go2rtc stream name or API URL.</div>';
     type = 'go2rtc';
   } else if (type === 'rtsp') {
-    media = `<uc-camera-player data-camera-session engine="ffmpeg" src="${streamUrl}" ${poster ? `poster="${poster}"` : ''} ${settings.autoplay ? 'autoplay' : ''} ${settings.muted ? 'muted' : ''} ${settings.controls ? 'controls' : ''} object-fit="${escapeHtml(settings.objectFit || 'cover')}"></uc-camera-player>`;
+    media = `<uc-camera-player data-camera-session engine="ffmpeg" src="${streamUrl}" ${poster ? `poster="${poster}"` : ''} ${settings.autoplay ? 'autoplay' : ''} ${settings.muted ? 'muted' : ''} ${settings.controls ? 'controls' : ''} object-fit="${fit}"></uc-camera-player>`;
   } else {
-    media = `<uc-camera-player data-camera-session engine="http" src="${streamUrl}" ${poster ? `poster="${poster}"` : ''} ${settings.autoplay ? 'autoplay' : ''} ${settings.muted ? 'muted' : ''} ${settings.controls ? 'controls' : ''} object-fit="${escapeHtml(settings.objectFit || 'cover')}"></uc-camera-player>`;
+    media = `<uc-camera-player data-camera-session engine="http" src="${streamUrl}" ${poster ? `poster="${poster}"` : ''} ${settings.autoplay ? 'autoplay' : ''} ${settings.muted ? 'muted' : ''} ${settings.controls ? 'controls' : ''} object-fit="${fit}"></uc-camera-player>`;
   }
   const heading = settings.showTitle ? `<div class="camera-heading camera-overlay-heading"><h3>${marquee(settings.title || 'Camera')}</h3><span>${type.toUpperCase()}</span></div>` : '';
-  return `<div class="camera-widget camera-fullbleed"><div class="camera-frame">${media}${heading}</div></div>`;
+  return `<div class="camera-widget camera-fullbleed"><div class="camera-frame ${settings.frameBorder ? '' : 'camera-borderless'}" style="${escapeHtml(frameStyle)}">${media}${heading}</div></div>`;
 }
 
 function conditionValue(entity) {
