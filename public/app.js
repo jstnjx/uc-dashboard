@@ -6900,6 +6900,12 @@ function previewItemFromForm(form, item) {
     const type = preview.entityType || entityForItem(preview)?.entity_type;
     preview.settings.customTitle = String(data.get('customTitle') || '').trim();
     preview.settings.customSubtitle = String(data.get('customSubtitle') || '').trim();
+    if (type === 'media_player') {
+      for (const key of ['metadataEntityId','artworkEntityId','playbackEntityId','volumeEntityId','progressEntityId']) {
+        preview.settings[key] = String(data.get(key) || '');
+      }
+      preview.settings.artworkShape = data.get('artworkShape') === 'square' ? 'square' : 'default';
+    }
     preview.settings.elements = { ...(preview.settings.elements || {}) };
     for (const [key] of ELEMENT_OPTIONS[type] || []) preview.settings.elements[key] = data.get(`element:${key}`) === 'on';
   }
@@ -7034,6 +7040,33 @@ function setWidgetEditorStep(form, requested) {
   fitWidgetEditorPreview(form);
 }
 
+function mediaPlayerSourcesEditor(settings = {}) {
+  const players = accessibleEntities().filter((entity) => entity.entity_type === 'media_player')
+    .sort((a, b) => localName(a.name, a.entity_id).localeCompare(localName(b.name, b.entity_id)));
+  const selector = (name, label, help) => {
+    const selected = String(settings[name] || '');
+    const missing = selected && !players.some((entity) => entity.entity_id === selected);
+    return '<div class="field"><label>' + label + '</label><select class="settings-input" name="' + name + '">' +
+      '<option value="">Widget media player (default)</option>' +
+      (missing ? '<option value="' + escapeHtml(selected) + '" selected>Saved entity (' + escapeHtml(selected) + ')</option>' : '') +
+      players.map((entity) => '<option value="' + escapeHtml(entity.entity_id) + '" ' + (selected === entity.entity_id ? 'selected' : '') + '>' +
+        escapeHtml(localName(entity.name, entity.entity_id)) + ' · ' + escapeHtml(entity.entity_id) + '</option>').join('') +
+      '</select><small>' + help + '</small></div>';
+  };
+  const square = settings.artworkShape === 'square';
+  return '<section class="settings-section media-player-source-settings"><h3>Media player data sources</h3>' +
+    '<p class="muted">Each function can use a different media player entity. Leave a selector on the default to use this widget\'s own entity.</p>' +
+    selector('metadataEntityId', 'Title, artist and playback state', 'Source for track title, artist, album and the displayed entity state.') +
+    selector('artworkEntityId', 'Artwork', 'Source for the artwork image only.') +
+    selector('playbackEntityId', 'Playback controls', 'Previous, play/pause and next commands are sent to this entity.') +
+    selector('volumeEntityId', 'Volume controls', 'Volume slider and mute commands are sent to this entity.') +
+    selector('progressEntityId', 'Playback progress', 'Source for timeline duration, position and playing state.') +
+    '<div class="field"><label>Artwork shape</label><select class="settings-input" name="artworkShape">' +
+    '<option value="default" ' + (!square ? 'selected' : '') + '>Fill available artwork area (default)</option>' +
+    '<option value="square" ' + (square ? 'selected' : '') + '>Square (1:1)</option></select></div>' +
+    '</section>';
+}
+
 function renderWidgetSettingsModal() {
   const { item } = findDashboardItem(state.modal.itemId);
   if (!item) return '';
@@ -7116,7 +7149,7 @@ function renderWidgetSettingsModal() {
     if (supportsWidgetContentAlignment(type)) body += widgetContentAlignmentField(settings);
   } else {
     const elements = itemElements(item, type);
-    body = `<section class="settings-section"><h3>Labels</h3><div class="field"><label>Custom title</label><input class="settings-input" name="customTitle" value="${escapeHtml(item.settings?.customTitle || '')}" placeholder="Use entity name"></div><div class="field"><label>Custom subtitle</label><input class="settings-input" name="customSubtitle" value="${escapeHtml(item.settings?.customSubtitle || '')}" placeholder="Use live state"></div></section><section class="settings-section"><h3>Visible elements</h3><div class="element-options">${(ELEMENT_OPTIONS[type] || []).map(([key, optionLabel]) => `<label class="element-option"><input type="checkbox" name="element:${key}" ${elements[key] ? 'checked' : ''}><span>${escapeHtml(optionLabel)}</span></label>`).join('')}</div></section><section class="settings-section"><h3>Defaults</h3><label class="checkbox-row"><input type="checkbox" name="saveTypeDefault"> Use these elements as the default for new ${escapeHtml(TYPE_LABELS[type])} widgets</label><label class="checkbox-row"><input type="checkbox" name="applyToType"> Apply these elements to every ${escapeHtml(TYPE_LABELS[type])} widget on this dashboard</label></section>${textTemplateHelp()}${type === 'activity' ? mediaBrowserModalSettingsFields(item.settings || {}, { mediaEntitySelect: `${entitySelect('mediaBrowserEntityId', item.settings?.mediaBrowserEntityId || '', 'Media player used by browser', ['media_player'])}<p class="muted">When no media player is selected, the first media player referenced by the activity is used.</p>` }) : type === 'media_player' ? mediaBrowserModalSettingsFields(item.settings || {}) : ''}`;
+    body = `<section class="settings-section"><h3>Labels</h3><div class="field"><label>Custom title</label><input class="settings-input" name="customTitle" value="${escapeHtml(item.settings?.customTitle || '')}" placeholder="Use entity name"></div><div class="field"><label>Custom subtitle</label><input class="settings-input" name="customSubtitle" value="${escapeHtml(item.settings?.customSubtitle || '')}" placeholder="Use live state"></div></section><section class="settings-section"><h3>Visible elements</h3><div class="element-options">${(ELEMENT_OPTIONS[type] || []).map(([key, optionLabel]) => `<label class="element-option"><input type="checkbox" name="element:${key}" ${elements[key] ? 'checked' : ''}><span>${escapeHtml(optionLabel)}</span></label>`).join('')}</div></section><section class="settings-section"><h3>Defaults</h3><label class="checkbox-row"><input type="checkbox" name="saveTypeDefault"> Use these elements as the default for new ${escapeHtml(TYPE_LABELS[type])} widgets</label><label class="checkbox-row"><input type="checkbox" name="applyToType"> Apply these elements to every ${escapeHtml(TYPE_LABELS[type])} widget on this dashboard</label></section>${textTemplateHelp()}${type === 'activity' ? mediaBrowserModalSettingsFields(item.settings || {}, { mediaEntitySelect: `${entitySelect('mediaBrowserEntityId', item.settings?.mediaBrowserEntityId || '', 'Media player used by browser', ['media_player'])}<p class="muted">When no media player is selected, the first media player referenced by the activity is used.</p>` }) : type === 'media_player' ? mediaPlayerSourcesEditor(item.settings || {}) + mediaBrowserModalSettingsFields(item.settings || {}) : ''}`;
   }
 
   const behavior = renderWidgetBehaviorSettings(item);
@@ -8856,6 +8889,14 @@ modalRoot.addEventListener('submit', async (event) => {
         customSubtitle: String(data.get('customSubtitle') || '').trim(),
         mediaBrowserEntityId: type === 'activity' ? String(data.get('mediaBrowserEntityId') || '') : item.settings?.mediaBrowserEntityId || '',
         ...(['activity', 'media_player'].includes(type) ? mediaBrowserModalSettingsFromForm(data) : {}),
+        ...(type === 'media_player' ? {
+          metadataEntityId: String(data.get('metadataEntityId') || ''),
+          artworkEntityId: String(data.get('artworkEntityId') || ''),
+          playbackEntityId: String(data.get('playbackEntityId') || ''),
+          volumeEntityId: String(data.get('volumeEntityId') || ''),
+          progressEntityId: String(data.get('progressEntityId') || ''),
+          artworkShape: data.get('artworkShape') === 'square' ? 'square' : 'default'
+        } : {}),
         elements,
         elementLayout: elementLayoutFromForm(data, item),
         entityGrid: entityGridLayoutFromForm(data, item),
