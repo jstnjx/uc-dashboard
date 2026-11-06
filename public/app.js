@@ -207,7 +207,7 @@ const SYSTEM_WIDGETS = {
     icon: 'camera',
     settings: {
       title: 'Camera', sourceUrl: '', sourceType: 'auto', go2rtcApiUrl: '', go2rtcStreamName: '', go2rtcMode: 'webrtc,webrtc/tcp,mse,hls,mjpeg,mp4', posterUrl: '', showTitle: true,
-      autoplay: true, muted: true, controls: false, objectFit: 'cover', objectPosition: 'center', playerMode: 'auto', nativeZoom: '100', cameraZoom: '100', iframeHideControls: false, frameBorder: false, refreshSeconds: '10'
+      autoplay: true, muted: true, controls: false, objectFit: 'cover', objectPosition: 'center', playerMode: 'iframe', nativeZoom: '100', cameraZoom: '100', iframeHideControls: false, frameBorder: false, refreshSeconds: '10'
     }
   },
   conditional: {
@@ -4521,6 +4521,15 @@ function go2rtcFallbackUrl(settings) {
   return url.toString();
 }
 
+function go2rtcMjpegUrl(settings) {
+  const parsed = parseGo2RtcSource(settings);
+  if (!parsed) return '';
+  const basePath = parsed.api.pathname === '/' ? '' : parsed.api.pathname.replace(/\/$/, '');
+  const url = new URL(basePath + '/api/stream.mjpeg', parsed.api.origin);
+  url.searchParams.set('src', parsed.streamName);
+  return url.toString();
+}
+
 function renderCameraWidget(item, settings) {
   let type = inferCameraType(settings);
   if (type === 'generic_rtsp') type = 'rtsp';
@@ -4535,7 +4544,7 @@ function renderCameraWidget(item, settings) {
   const position = ['center','left center','right center','center top','center bottom'].includes(settings.objectPosition) ? settings.objectPosition : 'center';
   const nativeZoom = Math.max(100, Math.min(160, Number(settings.nativeZoom) || 100)) / 100;
   const iframeZoom = Math.max(100, Math.min(160, Number(settings.cameraZoom) || 100)) / 100;
-  const playerMode = ['auto','native','iframe'].includes(settings.playerMode) ? settings.playerMode : 'auto';
+  const playerMode = ['auto','direct','mjpeg','iframe'].includes(settings.playerMode) ? settings.playerMode : 'iframe';
   const frameStyle = '--camera-object-fit:' + fit + ';--camera-object-position:' + position +
     ';--camera-native-zoom:' + nativeZoom + ';--camera-iframe-zoom:' + iframeZoom;
   const explicitGo2Rtc = Boolean(String(settings.go2rtcStreamName || '').trim() && String(settings.go2rtcApiUrl || '').trim());
@@ -4546,7 +4555,8 @@ function renderCameraWidget(item, settings) {
     media = `<img src="${imageUrl}" alt="${escapeHtml(settings.title || 'Camera')}" style="object-fit:${fit};object-position:${escapeHtml(position)};transform:scale(${nativeZoom});transform-origin:${escapeHtml(position)}" referrerpolicy="no-referrer" data-camera-session data-camera-image data-widget-id="${escapeHtml(item.id)}" data-refresh-seconds="${escapeHtml(settings.refreshSeconds || 10)}">`;
   } else if (type === 'go2rtc' || parsedGo2Rtc) {
     const playerUrl = go2rtcPlayerUrl(settings);
-    const wsUrl = go2rtcWebSocketUrl(settings);
+    const directMp4Url = go2rtcFallbackUrl(settings);
+    const directMjpegUrl = go2rtcMjpegUrl(settings);
     const fallbackUrl = go2rtcFallbackUrl(settings);
     const embedded = playerUrl
       ? '<div class="go2rtc-embed camera-iframe-mode ' +
@@ -4560,10 +4570,10 @@ function renderCameraWidget(item, settings) {
         (fallbackUrl ? '<a href="' + escapeHtml(fallbackUrl) + '" target="_blank" rel="noopener">Open MP4 fallback</a>' : '') +
         '</div></div>'
       : '';
-    const nativePlayer = wsUrl
-      ? '<uc-camera-player class="camera-native-player" data-camera-session engine="go2rtc" src="' +
-        escapeHtml(wsUrl) + '" modes="' + escapeHtml(settings.go2rtcMode || 'webrtc,webrtc/tcp,mse') +
-        '" ' + (poster ? 'poster="' + poster + '" ' : '') +
+    const directMp4 = directMp4Url
+      ? '<uc-camera-player class="camera-native-player" data-camera-session engine="http" src="' +
+        escapeHtml(directMp4Url) + '" ' +
+        (poster ? 'poster="' + poster + '" ' : '') +
         (settings.autoplay !== false ? 'autoplay ' : '') +
         (settings.muted !== false ? 'muted ' : '') +
         (settings.controls ? 'controls ' : '') +
@@ -4572,7 +4582,16 @@ function renderCameraWidget(item, settings) {
         '" data-iframe-hide-controls="' + (settings.iframeHideControls ? 'true' : 'false') +
         '" data-iframe-zoom="' + iframeZoom + '"></uc-camera-player>'
       : '';
-    media = playerMode === 'iframe' ? embedded : nativePlayer || embedded;
+    const directMjpeg = directMjpegUrl
+      ? '<img src="' + escapeHtml(directMjpegUrl) + '" data-camera-session data-camera-mjpeg ' +
+        'alt="' + escapeHtml(settings.title || 'Camera') +
+        '" style="object-fit:' + fit + ';object-position:' + escapeHtml(position) +
+        ';transform:scale(' + nativeZoom + ');transform-origin:' + escapeHtml(position) +
+        '" referrerpolicy="no-referrer">'
+      : '';
+    media = playerMode === 'iframe' ? embedded
+      : playerMode === 'mjpeg' ? directMjpeg
+        : directMp4 || embedded;
     if (!media) media = '<div class="camera-placeholder">Unable to derive the go2rtc stream name or API URL.</div>';
     type = 'go2rtc';
   } else if (type === 'rtsp') {
@@ -7248,7 +7267,7 @@ function renderWidgetSettingsModal() {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Activities')}"></div>${entitySelect('activityEntityIds', settings.activityEntityIds, 'Activities (leave all unchecked to show every activity)', ['activity'], true)}<div class="field"><label>Columns</label><select class="settings-input" name="columns">${[1,2,3,4].map((value) => `<option value="${value}" ${Number(settings.columns) === value ? 'selected' : ''}>${value}</option>`).join('')}</select></div><section class="settings-section"><h3>Activity row</h3>${[['showIcon','Show activity icon'],['showName','Show activity name'],['showState','Show activity state'],['showCount','Show activity count in header']].map(([key,label]) => `<label class="checkbox-row"><input type="checkbox" name="${key}" ${settings[key] !== false ? 'checked' : ''}> ${label}</label>`).join('')}</section>${activityLauncherConfigFields(settings)}${mediaBrowserModalSettingsFields(settings)}`;
     } else if (type === 'camera') {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Camera')}"></div><div class="field"><label>Stream or image URL</label><input class="settings-input" name="sourceUrl" value="${escapeHtml(settings.sourceUrl || '')}" placeholder="rtsp://user:password@camera/stream"></div><div class="field"><label>Source type</label><select class="settings-input" name="sourceType">${[['auto','Automatic'],['go2rtc','go2rtc RTSP output (MSE / WebRTC)'],...(!state.settings.onRemote ? [['generic_rtsp','Generic RTSP (external FFmpeg)']] : []),['video','Browser-compatible video'],['image','Still/MJPEG image']].map(([value,label]) => `<option value="${value}" ${settings.sourceType === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>go2rtc API URL override</label><input class="settings-input" name="go2rtcApiUrl" value="${escapeHtml(settings.go2rtcApiUrl || '')}" placeholder="http://go2rtc-host:1984"><small>Optional. For an RTSP URL on port 8554, the dashboard automatically uses the same host on port 1984.</small></div><div class="field"><label>go2rtc stream name override</label><input class="settings-input" name="go2rtcStreamName" value="${escapeHtml(settings.go2rtcStreamName || '')}" placeholder="front-door"><small>Optional. Use this when the stream name cannot be derived from the pasted URL.</small></div><div class="field"><label>go2rtc playback modes</label><input class="settings-input" name="go2rtcMode" value="${escapeHtml(settings.go2rtcMode || 'webrtc,webrtc/tcp,mse,hls,mjpeg,mp4')}"><small>The integrated go2rtc player tries these modes in order. Recommended: webrtc,webrtc/tcp,mse,hls,mjpeg,mp4.</small></div><div class="field"><label>Poster URL</label><input class="settings-input" name="posterUrl" value="${escapeHtml(settings.posterUrl || '')}"></div><div class="field"><label>Image fit</label><select class="settings-input" name="objectFit">${['cover','contain','fill'].map((value) => `<option value="${value}" ${settings.objectFit === value ? 'selected' : ''}>${value}</option>`).join('')}</select></div><div class="field"><label>Camera crop zoom</label><input type="range" min="100" max="160" name="cameraZoom" value="${escapeHtml(settings.cameraZoom || 100)}"><small>Applied to the legacy iframe player only; set 100% to avoid automatic cropping.</small></div><div class="field"><label>Still-image refresh interval (seconds)</label><input class="settings-input" type="number" min="2" max="3600" name="refreshSeconds" value="${escapeHtml(settings.refreshSeconds || 10)}"></div>${[['showTitle','Show title'],['autoplay','Autoplay'],['muted','Mute stream'],['controls','Show video controls']].map(([key,label]) => `<label class="checkbox-row"><input type="checkbox" name="${key}" ${settings[key] ? 'checked' : ''}> ${label}</label>`).join('')}<p class="muted">go2rtc streams use go2rtc’s official compatibility player. With a go2rtc API URL, an arbitrary RTSP URL can be relayed directly by go2rtc by leaving the stream-name override empty. Generic RTSP uses FFmpeg only in an external deployment. On Remote Two and Remote 3, RTSP requires go2rtc.</p>`;
-      body += `<section class="settings-section"><h3>Stream rendering</h3><div class="field"><label>go2rtc player</label><select class="settings-input" name="playerMode">${[['auto','Automatic — native WebRTC/MSE, iframe fallback'],['native','Native video — no embedded player'],['iframe','Legacy embedded go2rtc player']].map(([value,label])=>`<option value="${value}" ${(settings.playerMode || 'auto')===value?'selected':''}>${label}</option>`).join('')}</select><small>Native playback is recommended. It eliminates the second player's UI, padding and CSS. The iframe cannot control its internal video crop.</small></div><div class="field"><label>Video/image fitting</label><p class="muted">Cover fills the tile but crops edges. Contain shows the full frame with letterboxing if aspect ratios differ. Stretch fills without bars but distorts the image.</p></div><div class="field"><label>Image focus</label><select class="settings-input" name="objectPosition">${[['center','Center'],['left center','Left'],['right center','Right'],['center top','Top'],['center bottom','Bottom']].map(([value,label])=>`<option value="${value}" ${(settings.objectPosition || 'center')===value?'selected':''}>${label}</option>`).join('')}</select></div><div class="field"><label>Native video zoom</label><input class="settings-input" type="range" min="100" max="160" step="1" name="nativeZoom" value="${escapeHtml(settings.nativeZoom || 100)}"><small>100% shows the natural fitted frame. Zoom above 100% deliberately crops image edges.</small></div><label class="checkbox-row"><input type="checkbox" name="frameBorder" ${settings.frameBorder === true ? 'checked' : ''}> Show stream viewport border</label><label class="checkbox-row"><input type="checkbox" name="iframeHideControls" ${settings.iframeHideControls === true ? 'checked' : ''}> Crop embedded player's control area (iframe only)</label><small>For best results use native playback with 100% zoom, choose Cover to fill the frame or Contain to keep all camera pixels visible.</small></section>`;
+      body += `<section class="settings-section"><h3>Stream rendering</h3><div class="field"><label>go2rtc player</label><select class="settings-input" name="playerMode">${[['iframe','Embedded go2rtc (best compatibility)'],['auto','Direct HTTP MP4 with iframe fallback'],['direct','Direct HTTP MP4 (no fallback)'],['mjpeg','Direct MJPEG image stream (requires MJPEG codec)']].map(([value,label])=>`<option value="${value}" ${(settings.playerMode || 'iframe')===value?'selected':''}>${label}</option>`).join('')}</select><small>Direct MP4/MJPEG avoids the embedded player and supports exact fit controls. MP4 can have startup delay and browser compatibility limits; MJPEG requires an MJPEG codec in go2rtc. Embedded mode remains the safe default.</small></div><div class="field"><label>Video/image fitting</label><p class="muted">Cover fills the tile but crops edges. Contain shows the full frame with letterboxing if aspect ratios differ. Stretch fills without bars but distorts the image.</p></div><div class="field"><label>Image focus</label><select class="settings-input" name="objectPosition">${[['center','Center'],['left center','Left'],['right center','Right'],['center top','Top'],['center bottom','Bottom']].map(([value,label])=>`<option value="${value}" ${(settings.objectPosition || 'center')===value?'selected':''}>${label}</option>`).join('')}</select></div><div class="field"><label>Native video zoom</label><input class="settings-input" type="range" min="100" max="160" step="1" name="nativeZoom" value="${escapeHtml(settings.nativeZoom || 100)}"><small>100% shows the natural fitted frame. Zoom above 100% deliberately crops image edges.</small></div><label class="checkbox-row"><input type="checkbox" name="frameBorder" ${settings.frameBorder === true ? 'checked' : ''}> Show stream viewport border</label><label class="checkbox-row"><input type="checkbox" name="iframeHideControls" ${settings.iframeHideControls === true ? 'checked' : ''}> Crop embedded player's control area (iframe only)</label><small>For direct MP4/MJPEG use 100% zoom and choose Cover to fill the frame or Contain to keep all camera pixels visible. For the iframe choose 100% crop and do not hide controls to avoid artificial cropping.</small></section>`;
     } else if (type === 'conditional') {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || '')}"></div><section class="settings-section" data-conditional-classic-settings ${settings.layoutMode === 'fixed' ? 'hidden' : ''}><h3>Classic group condition</h3>${entitySelect('conditionEntityId', settings.conditionEntityId, 'Condition entity')}<div class="field"><label>Operator</label><select class="settings-input" name="operator">${[['equals','Equals'],['not_equals','Does not equal'],['contains','Contains'],['greater','Greater than'],['less','Less than'],['truthy','Is active / truthy']].map(([value,label]) => `<option value="${value}" ${settings.operator === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>Comparison value</label><input class="settings-input" name="compareValue" value="${escapeHtml(settings.compareValue ?? 'ON')}"></div><div class="field"><label>Message when false</label><input class="settings-input" name="falseText" value="${escapeHtml(settings.falseText || 'Condition not met')}"></div><label class="checkbox-row"><input type="checkbox" name="invert" ${settings.invert ? 'checked' : ''}> Invert result</label><label class="checkbox-row"><input type="checkbox" name="hideWhenFalse" ${settings.hideWhenFalse ? 'checked' : ''}> Collapse completely when false</label><label class="checkbox-row"><input type="checkbox" name="layoutLocked" ${settings.layoutLocked ? 'checked' : ''}> Lock child order and layout</label></section>${conditionalItemOptions(item)}`;
     } else if (type === 'media_browser') {
