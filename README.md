@@ -130,16 +130,16 @@ The card-level condition fields remain available in **Classic** mode; fixed layo
 
 The Camera widget's **Stream rendering** section offers:
 
-- **Automatic** (recommended): use the built-in native WebRTC/MSE player for go2rtc, with fallback to the embedded player after repeated errors.
-- **Native video**: use the built-in video element only—no nested iframe or player chrome.
-- **Legacy iframe**: keep the official embedded go2rtc page for compatibility.
+- **Embedded go2rtc** (default): use go2rtc's official player for the widest codec/browser compatibility.
+- **Direct MP4** (with optional iframe fallback): render go2rtc's HTTP MP4 stream in a native HTML video element, without embedding another player's interface. Progressive MP4 can have higher startup latency and may not work in every browser.
+- **Direct MJPEG**: render go2rtc's MJPEG stream as an image with full fitting and cropping control; the stream must expose MJPEG (or have go2rtc FFmpeg transcoding configured).
 - **Fit:** Cover fills the widget but crops edges; Contain always displays the full source with empty space when aspect ratios differ; Stretch fills and may distort.
 - **Image focus:** center or align the picture left, right, top or bottom.
-- **Native video zoom:** 100% preserves the fitted frame. Increase only when intentional cropping is desired.
-- **Frame border:** optional. The native player defaults to a borderless full-bleed viewport.
+- **Direct video/image zoom:** 100% preserves the fitted frame. Increase only when intentional cropping is desired.
+- **Frame border:** optional. Direct and embedded renderers use a borderless full-bleed viewport by default.
 - **Legacy iframe crop controls:** disabled by default. This does not control the video layout inside a cross-origin iframe.
 
-For a full-frame security camera, choose **Native video + Contain + 100% zoom**. To fill a dashboard tile without letterboxing, select **Cover**; some image cropping is unavoidable when the source and tile aspect ratios differ.
+For precise fitting of a go2rtc feed, choose **Direct MP4 + Contain + 100% zoom** (or Direct MJPEG if the stream exposes MJPEG). To fill a dashboard tile without letterboxing, select **Cover**; image cropping is unavoidable when the source and tile aspect ratios differ. If direct playback is incompatible or slow in the target browser, use the embedded go2rtc player, which cannot expose its cross-origin video's internal CSS to the dashboard.
 
 ### Kiosk and screensaver
 
