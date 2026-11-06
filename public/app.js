@@ -1996,6 +1996,7 @@ function findSlot(placed, w, h, columns, preferred = { x: 0, y: 0 }, ignoreId = 
 
 function displayLayout(items, columns = DASHBOARD_GRID_COLUMNS) {
   const placed = [];
+  const occupied = [];
   const sorted = [...items].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0));
   for (const item of sorted) {
     const minWidth = item.entityType === 'button' || item.widgetType === 'spacer' ? 2 : 1;
@@ -2005,8 +2006,15 @@ function displayLayout(items, columns = DASHBOARD_GRID_COLUMNS) {
       x: Math.min(columns - w, Math.max(0, Number(item.x) || 0)),
       y: Math.max(0, Number(item.y) || 0)
     };
-    const slot = findSlot(placed, w, h, columns, preferred, item.id);
-    placed.push({ ...slot, id: item.id });
+    // Hidden widgets retain their configured coordinates but do not reserve cells.
+    // This lets mutually exclusive, condition-controlled widgets share the same slot.
+    const visible = widgetConditionsMatch(item);
+    const slot = visible
+      ? findSlot(occupied, w, h, columns, preferred, item.id)
+      : { ...preferred, w, h };
+    const position = { ...slot, id: item.id };
+    placed.push(position);
+    if (visible) occupied.push(position);
   }
   return placed;
 }
@@ -7132,12 +7140,33 @@ function patchVisibleDashboard({ entityIds = null, runtime = false } = {}) {
       const relevant = runtime ? (item.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(item.widgetType) : item.entityType === 'media_player') : itemReferencesEntity(item, entityIds);
       if (!relevant) continue;
       const node = [...grid.children].find((candidate) => candidate.dataset?.itemId === item.id);
-      if (!node) continue;
       const signature = runtime ? runtimeWidgetSignature(item) : '';
-      if (signature && node.dataset.runtimeSignature === signature) continue;
+      if (node && signature && node.dataset.runtimeSignature === signature) continue;
+      if (!node) {
+        // A previously hidden widget has no DOM node: insert it when its rule becomes true.
+        const markup = renderWidget(item, layoutMap.get(item.id), columns);
+        if (!markup) continue;
+        const template = document.createElement('template');
+        template.innerHTML = localizedDashboardMarkup(markup.trim());
+        const inserted = template.content.firstElementChild;
+        if (!inserted) continue;
+        const following = dashboard.items.slice(dashboard.items.indexOf(item) + 1)
+          .map((other) => [...grid.children].find((child) => child.dataset?.itemId === other.id))
+          .find(Boolean);
+        if (following) grid.insertBefore(inserted, following);
+        else grid.append(inserted);
+        continue;
+      }
       if (itemContainsCamera(item) && item.kind === 'system' && CONTAINER_WIDGET_TYPES.has(item.widgetType)) patchCameraSafeContainer(node, item, entityIds, runtime);
       else if (!(item.kind === 'system' && item.widgetType === 'camera')) {
-        const replacement = replaceNodeFromHtml(node, renderWidget(item, layoutMap.get(item.id), columns));
+        const markup = renderWidget(item, layoutMap.get(item.id), columns);
+        if (!markup) {
+          // Remove a widget that stopped matching, without rebuilding camera streams.
+          cleanupCustomWidgetScript(item.id);
+          node.remove();
+          continue;
+        }
+        const replacement = replaceNodeFromHtml(node, markup);
         if (replacement && signature) replacement.dataset.runtimeSignature = signature;
       }
     }
