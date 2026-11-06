@@ -203,6 +203,19 @@ data/backups/
 
 Portable integration settings can be omitted during import when moving a dashboard to another Remote or host.
 
+## OpenWeatherMap weather data
+
+The Weather widget supports two data sources: **Remote / Home Assistant entities** (the existing default) or **OpenWeatherMap API**.
+
+1. Obtain an API key from [OpenWeatherMap](https://home.openweathermap.org/api_keys).
+2. In UC Dashboard, open **Settings → Weather** and save the API key. Alternatively set `OPENWEATHERMAP_API_KEY` on the integration server.
+3. Edit a **Weather** widget and select **OpenWeatherMap API** as its data source.
+4. Enter a city (for example `Berlin,DE`) or geographic coordinates. Select the desired units, layout, and number of forecast items.
+
+The integration calls OpenWeatherMap's Current Weather API and free-plan-compatible 5-day / 3-hour Forecast API. Hourly and daily views share the existing weather widget styling. API data is cached for 10 minutes on the integration server, and browsers refresh periodically. The key remains in private integration settings and is **never sent to the dashboard browser or included in backups**.
+
+The free APIs used here do not provide UV index data; UV remains available when the widget uses a compatible entity source. OpenWeatherMap's API availability and limits depend on your account plan.
+
 ## Camera configuration
 
 For a named go2rtc stream, use:
@@ -262,6 +275,7 @@ WebSocket: ws://127.0.0.1/ws
 | `REMOTE_HTTP_URL` | Auto-detected | Advanced Core REST override |
 | `REMOTE_WS_URL` | Auto-detected | Advanced Core WebSocket override |
 | `REMOTE_API_KEY` | Provisioned | Advanced API-key override |
+| `OPENWEATHERMAP_API_KEY` | Unset | Optional server-side OpenWeatherMap API key (overrides Settings → Weather) |
 | `FFMPEG_PATH` | `ffmpeg` | FFmpeg executable for external RTSP relay |
 | `UC_DASHBOARD_LOG_LEVEL` | `info` | `error`, `warn`, `info`, `debug`, or `trace` |
 
