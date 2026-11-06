@@ -7379,6 +7379,54 @@ function itemContainsCamera(item) {
   return groups.some((items) => items.some(itemContainsCamera));
 }
 
+function patchConditionalFixedContainer(node, item, entityIds, runtime) {
+  const grid = node.querySelector('.conditional-container.conditional-fixed > .conditional-grid.fixed-layout');
+  if (!grid) return;
+  const settings = item.settings || {};
+  const children = Array.isArray(settings.items) ? settings.items : [];
+  const layout = conditionalFixedGrid(settings);
+  const depth = Number(grid.closest('[data-nesting-depth]')?.dataset.nestingDepth || 0) + 1;
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index];
+    const visible = state.editMode || conditionalChildVisible(child);
+    const existing = [...grid.children].find((node) => node.dataset?.itemId === child.id);
+    if (!visible) {
+      if (existing) { cleanupCustomWidgetScript(child.id); existing.remove(); }
+      continue;
+    }
+    const relevant = runtime
+      ? (child.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(child.widgetType) : child.entityType === 'media_player')
+      : itemReferencesEntity(child, entityIds);
+    if (existing) {
+      // Never tear down an active camera or a container holding a camera.
+      if (itemContainsCamera(child)) {
+        if (child.kind === 'system' && CONTAINER_WIDGET_TYPES.has(child.widgetType)) patchCameraSafeContainer(existing, child, entityIds, runtime);
+        continue;
+      }
+      if (!relevant) continue;
+      const html = renderNestedWidget(child, {
+        standalone: true, fixedSlot: conditionalSlot(child, index, settings),
+        columns: layout.columns, rows: layout.rows, depth
+      });
+      replaceNodeFromHtml(existing, html);
+      continue;
+    }
+    const html = renderNestedWidget(child, {
+      standalone: true, fixedSlot: conditionalSlot(child, index, settings),
+      columns: layout.columns, rows: layout.rows, depth
+    });
+    if (!html) continue;
+    const template = document.createElement('template');
+    template.innerHTML = localizedDashboardMarkup(html.trim());
+    const newNode = template.content.firstElementChild;
+    if (!newNode) continue;
+    const following = children.slice(index + 1).map((candidate) =>
+      [...grid.children].find((node) => node.dataset?.itemId === candidate.id)).find(Boolean);
+    if (following) grid.insertBefore(newNode, following);
+    else grid.append(newNode);
+  }
+}
+
 function patchCameraSafeContainer(node, item, entityIds, runtime) {
   const groups = item.widgetType === 'tab_container' ? (item.settings?.tabs || []).map((tab) => tab.items || []) : [item.settings?.items || []];
   for (const children of groups) for (const child of children) {
@@ -7451,7 +7499,10 @@ function patchVisibleDashboard({ entityIds = null, runtime = false } = {}) {
         else grid.append(inserted);
         continue;
       }
-      if (itemContainsCamera(item) && item.kind === 'system' && CONTAINER_WIDGET_TYPES.has(item.widgetType)) patchCameraSafeContainer(node, item, entityIds, runtime);
+      if (item.kind === 'system' && item.widgetType === 'conditional' && item.settings?.layoutMode === 'fixed') {
+        patchConditionalFixedContainer(node, item, entityIds, runtime);
+      }
+      else if (itemContainsCamera(item) && item.kind === 'system' && CONTAINER_WIDGET_TYPES.has(item.widgetType)) patchCameraSafeContainer(node, item, entityIds, runtime);
       else if (!(item.kind === 'system' && item.widgetType === 'camera')) {
         const markup = renderWidget(item, layoutMap.get(item.id), columns);
         if (!markup) {
@@ -7479,6 +7530,7 @@ function patchVisibleDashboard({ entityIds = null, runtime = false } = {}) {
     runCustomWidgetScripts();
     initializeMediaSwipers(app);
     initializeWidgetCarousels(app);
+    ensureVisibleMediaBrowsers();
     applyKioskScale();
   });
 }
