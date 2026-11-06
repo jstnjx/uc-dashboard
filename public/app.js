@@ -233,7 +233,7 @@ const SYSTEM_WIDGETS = {
   },
   weather: {
     label: 'Weather', description: 'Current conditions with optional hourly or daily forecast data.', icon: 'weather',
-    settings: { title: 'Weather', contentAlignment: 'default', layout: 'combined', temperatureEntityId: '', conditionEntityId: '', humidityEntityId: '', windEntityId: '', precipitationEntityId: '', uvEntityId: '', sunriseEntityId: '', sunsetEntityId: '', forecastEntityId: '', forecastAttribute: 'forecast', forecastLimit: '6', showCondition: true, showHumidity: true, showWind: true, showPrecipitation: true, showUv: false, showSun: true, showForecast: true }
+    settings: { title: 'Weather', contentAlignment: 'default', layout: 'combined', weatherSource: 'entities', openWeatherLocation: '', openWeatherLat: '', openWeatherLon: '', openWeatherUnits: 'metric', temperatureEntityId: '', conditionEntityId: '', humidityEntityId: '', windEntityId: '', precipitationEntityId: '', uvEntityId: '', sunriseEntityId: '', sunsetEntityId: '', forecastEntityId: '', forecastAttribute: 'forecast', forecastLimit: '6', showCondition: true, showHumidity: true, showWind: true, showPrecipitation: true, showUv: false, showSun: true, showForecast: true }
   },
   text: { label: 'Text', description: 'A heading, note, room label, or instruction.', icon: 'text', settings: { title: 'Heading', body: 'Text', showHeading: true, showBody: true, dividerBelowHeading: false, dividerBelowBody: false, contentAlignment: 'default' } },
   connection: { label: 'Connection status', description: 'Remote Core connection and entity count.', icon: 'wifi', settings: { title: 'Remote', showMessage: true, showEntityCount: true, contentAlignment: 'default' } },
@@ -408,6 +408,7 @@ const state = {
     onRemote: false,
     environmentOverrides: {},
     unfoldedToolsApiKeyConfigured: false,
+    openWeatherApiKeyConfigured: false,
     unfoldedToolsCacheSelected: true,
     unfoldedToolsIncludeInBackup: true
   },
@@ -5364,7 +5365,103 @@ function renderHistoryGraph(item,settings){
 
 function weatherForecast(settings){const entity=state.entities.get(settings.forecastEntityId)||state.entities.get(settings.conditionEntityId)||state.entities.get(settings.temperatureEntityId);const raw=entity?.attributes?.[settings.forecastAttribute||'forecast']||entity?.attributes?.forecast||[];return Array.isArray(raw)?raw.slice(0,Math.max(1,Math.min(12,Number(settings.forecastLimit)||6))):[];}
 function forecastLabel(entry,index){const raw=entry.datetime||entry.time||entry.date||entry.start||'';const date=new Date(raw);if(Number.isFinite(date.getTime()))return new Intl.DateTimeFormat(dashboardLocale(),{weekday:'short',hour:entry.is_daytime===undefined?'2-digit':undefined}).format(date);return `+${index+1}`;}
+
+const openWeatherWidgetCache = new Map();
+const OPENWEATHER_CLIENT_TTL_MS = 10 * 60 * 1000;
+
+function openWeatherCacheEntry(settings) {
+  const location = String(settings.openWeatherLocation || '').trim();
+  const lat = String(settings.openWeatherLat || '').trim();
+  const lon = String(settings.openWeatherLon || '').trim();
+  if (!location && (!lat || !lon)) return { error: 'Set a city or latitude and longitude in the widget settings.' };
+  const units = ['metric', 'imperial', 'standard'].includes(settings.openWeatherUnits) ? settings.openWeatherUnits : 'metric';
+  const lang = String(dashboardLocale() || navigator.language || 'en').split('-')[0].toLowerCase();
+  const params = new URLSearchParams({ units, lang, ...(lat && lon ? { lat, lon } : { location }) });
+  const key = params.toString();
+  let entry = openWeatherWidgetCache.get(key);
+  if (!entry) {
+    entry = { data: null, error: '', fetching: false, refreshAt: 0 };
+    openWeatherWidgetCache.set(key, entry);
+  }
+  if (!entry.fetching && Date.now() >= entry.refreshAt) {
+    entry.fetching = true;
+    entry.refreshAt = Date.now() + 120000;
+    fetch('/api/weather/openweathermap?' + key, { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Unable to load OpenWeatherMap');
+        entry.data = payload;
+        entry.error = '';
+        entry.refreshAt = Date.now() + OPENWEATHER_CLIENT_TTL_MS;
+      })
+      .catch((error) => { entry.error = error.message || 'Unable to load weather'; })
+      .finally(() => { entry.fetching = false; if (state.config) scheduleRuntimePatch({ runtime: true }); });
+  }
+  return entry;
+}
+
+function openWeatherSymbol(weatherId, iconCode = '') {
+  const id = Number(weatherId);
+  if (id >= 200 && id < 300) return 'storm';
+  if (id >= 300 && id < 600) return 'rain';
+  if (id >= 600 && id < 700) return 'snow';
+  if (id >= 700 && id < 800) return 'fog';
+  if (id === 800) return String(iconCode).endsWith('n') ? 'weather' : 'sun';
+  if (id > 800) return 'cloud';
+  return 'weather';
+}
+
+function openWeatherTime(timestamp, timezone) {
+  if (!timestamp) return '—';
+  return new Intl.DateTimeFormat(dashboardLocale() || undefined, { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' }).format(new Date((timestamp + (Number(timezone) || 0)) * 1000));
+}
+
+function renderOpenWeatherWidget(item, settings) {
+  const entry = openWeatherCacheEntry(settings);
+  const data = entry.data;
+  const showForecast = settings.showForecast !== false && ['hourly', 'daily', 'combined'].includes(settings.layout || 'combined');
+  const current = data && data.current;
+  const layoutClass = 'system-weather weather-layout-' + escapeHtml(settings.layout || 'combined');
+  if (!current) {
+    const message = entry.error || 'Loading OpenWeatherMap data…';
+    return '<div class="' + layoutClass + '"><div class="weather-current"><div class="weather-copy"><small>' + marquee(settings.title || 'Weather') + '</small><span>' + escapeHtml(message) + '</span></div><span class="weather-icon">' + renderWidgetIcon(item, 'weather', 68) + '</span></div></div>';
+  }
+  const tempUnit = data.units === 'imperial' ? '°F' : data.units === 'standard' ? 'K' : '°C';
+  const windUnit = data.units === 'imperial' ? 'mph' : 'm/s';
+  const formatTemperature = (value) => value == null ? '—' : Math.round(value) + ' ' + tempUnit;
+  const forecast = settings.layout === 'daily' ? data.daily || [] : data.hourly || [];
+  const limit = Math.max(1, Math.min(12, Number(settings.forecastLimit) || 6));
+  const severe = Number(current.weatherId) >= 200 && Number(current.weatherId) < 300;
+  const details = [];
+  if (settings.showHumidity !== false && current.humidity != null) details.push(['humidity', current.humidity + '%']);
+  if (settings.showWind !== false && current.windSpeed != null) details.push(['wind', Number(current.windSpeed).toFixed(1) + ' ' + windUnit]);
+  if (settings.showPrecipitation !== false && data.hourly && data.hourly[0]) details.push(['Rain chance', data.hourly[0].precipitationProbability + '%']);
+  if (settings.showSun !== false && current.sunrise) details.push(['sunrise', openWeatherTime(current.sunrise, data.timezone)]);
+  if (settings.showSun !== false && current.sunset) details.push(['sunset', openWeatherTime(current.sunset, data.timezone)]);
+  const forecastHtml = forecast.slice(0, limit).map((value) => {
+    const date = value.day ? new Date(value.day + 'T12:00:00Z') : new Date((value.timestamp + (Number(data.timezone) || 0)) * 1000);
+    const label = new Intl.DateTimeFormat(dashboardLocale() || undefined,
+      value.day ? { weekday: 'short', timeZone: 'UTC' } : { weekday: 'short', hour: '2-digit', timeZone: 'UTC' }).format(date);
+    return '<article><small>' + escapeHtml(label) + '</small>' + materialSymbol(openWeatherSymbol(value.weatherId, value.icon), 24) + '<strong>' + escapeHtml(formatTemperature(value.temperature)) + '</strong><span>' + escapeHtml(value.precipitationProbability) + '%</span></article>';
+  }).join('');
+  return '<div class="' + layoutClass + '"><div class="weather-current ' + (severe ? 'severe-weather' : '') + '"><div class="weather-copy"><small>' + marquee(settings.title || data.location || 'Weather') + '</small><strong>' + marquee(formatTemperature(current.temperature)) + '</strong>' +
+    (settings.showCondition !== false && current.condition ? '<span>' + marquee(current.condition) + '</span>' : '') +
+    (severe ? '<em>' + materialSymbol('warning', 15) + ' ' + escapeHtml(translateDashboardValue('severe_conditions')) + '</em>' : '') +
+    '</div><span class="weather-icon">' + renderWidgetIcon(item, openWeatherSymbol(current.weatherId, current.icon), 68) + '</span></div><div class="weather-meta">' +
+    details.map(([label, value]) => '<span>' + escapeHtml(translateDashboardValue(label)) + ' <b>' + escapeHtml(value) + '</b></span>').join('') + '</div>' +
+    (showForecast ? '<div class="weather-forecast">' + (forecastHtml || '<div class="empty-inline">No forecast data available.</div>') + '</div>' : '') + '</div>';
+}
+
+function refreshOpenWeatherWidgets() {
+  if (!state.config || document.hidden) return;
+  const dashboard = currentDashboard();
+  for (const item of dashboard?.items || []) {
+    if (item.kind === 'system' && item.widgetType === 'weather' && item.settings?.weatherSource === 'openweathermap' && widgetConditionsMatch(item)) openWeatherCacheEntry(item.settings);
+  }
+}
+
 function renderWeatherWidget(item,settings){
+ if (settings.weatherSource === 'openweathermap') return renderOpenWeatherWidget(item,settings);
  const temperature=entityReading(settings.temperatureEntityId),condition=entityReading(settings.conditionEntityId),humidity=entityReading(settings.humidityEntityId),wind=entityReading(settings.windEntityId),precip=entityReading(settings.precipitationEntityId),uv=entityReading(settings.uvEntityId),sunrise=entityReading(settings.sunriseEntityId),sunset=entityReading(settings.sunsetEntityId);const rawConditionText=condition.value==='—'?'':String(condition.value);const conditionText=rawConditionText?translateDashboardValue(rawConditionText):'';const severe=/storm|thunder|hail|tornado|hurricane|warning|severe/i.test(rawConditionText);const forecast=weatherForecast(settings);const showForecast=settings.showForecast!==false&&['hourly','daily','combined'].includes(settings.layout||'combined');
  return `<div class="system-weather weather-layout-${escapeHtml(settings.layout||'combined')}"><div class="weather-current ${severe?'severe-weather':''}"><div class="weather-copy"><small>${marquee(settings.title||'Weather')}</small><strong>${marquee(temperature.text)}</strong>${settings.showCondition!==false&&conditionText?`<span>${marquee(conditionText)}</span>`:''}${severe?`<em>${materialSymbol('warning',15)} ${escapeHtml(translateDashboardValue('severe_conditions'))}</em>`:''}</div><span class="weather-icon">${renderWidgetIcon(item,weatherIcon(rawConditionText),68)}</span></div><div class="weather-meta">${settings.showHumidity!==false&&humidity.value!=='—'?`<span>${escapeHtml(translateDashboardValue('humidity'))} <b>${escapeHtml(humidity.text)}</b></span>`:''}${settings.showWind!==false&&wind.value!=='—'?`<span>${escapeHtml(translateDashboardValue('wind'))} <b>${escapeHtml(wind.text)}</b></span>`:''}${settings.showPrecipitation!==false&&precip.value!=='—'?`<span>${escapeHtml(translateDashboardValue('rain'))} <b>${escapeHtml(precip.text)}</b></span>`:''}${settings.showUv&&uv.value!=='—'?`<span>${escapeHtml(translateDashboardValue('uv'))} <b>${escapeHtml(uv.text)}</b></span>`:''}${settings.showSun!==false&&sunrise.value!=='—'?`<span>${escapeHtml(translateDashboardValue('sunrise'))} <b>${escapeHtml(sunrise.text)}</b></span>`:''}${settings.showSun!==false&&sunset.value!=='—'?`<span>${escapeHtml(translateDashboardValue('sunset'))} <b>${escapeHtml(sunset.text)}</b></span>`:''}</div>${showForecast?`<div class="weather-forecast">${forecast.length?forecast.map((entry,index)=>`<article><small>${escapeHtml(forecastLabel(entry,index))}</small>${materialSymbol(weatherIcon(entry.condition||entry.state||''),24)}<strong>${escapeHtml(localizedValue(entry.temperature??entry.temp??'—'))}${entry.temperature_unit||entityUnit(state.entities.get(settings.forecastEntityId))||''}</strong>${entry.precipitation_probability!=null?`<span>${escapeHtml(entry.precipitation_probability)}%</span>`:''}</article>`).join(''):'<div class="empty-inline">No forecast data exposed by the selected entity.</div>'}</div>`:''}</div>`;
 }
@@ -6968,6 +7065,15 @@ function renderWidgetSettingsModal() {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || '')}"></div><div class="field"><label>Time zone</label><input class="settings-input" name="timezone" value="${escapeHtml(settings.timezone || '')}" placeholder="Europe/Berlin"><small>Leave empty to use the browser time zone.</small></div><label class="checkbox-row"><input type="checkbox" name="showDate" ${settings.showDate ? 'checked' : ''}> Show date</label><label class="checkbox-row"><input type="checkbox" name="showSeconds" ${settings.showSeconds ? 'checked' : ''}> Show seconds</label><label class="checkbox-row"><input type="checkbox" name="hour12" ${settings.hour12 ? 'checked' : ''}> Use 12-hour time</label>`;
     } else if (type === 'weather') {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Weather')}"></div><div class="field"><label>Layout</label><select class="settings-input" name="layout">${[['current','Current only'],['hourly','Hourly'],['daily','Daily'],['combined','Combined']].map(([v,l])=>`<option value="${v}" ${settings.layout===v?'selected':''}>${l}</option>`).join('')}</select></div>${sensorSelect('temperatureEntityId', settings.temperatureEntityId, 'Temperature sensor')}${sensorSelect('conditionEntityId', settings.conditionEntityId, 'Condition sensor', true)}${sensorSelect('humidityEntityId', settings.humidityEntityId, 'Humidity sensor')}${sensorSelect('windEntityId', settings.windEntityId, 'Wind sensor')}${sensorSelect('precipitationEntityId', settings.precipitationEntityId, 'Rain probability sensor')}${sensorSelect('uvEntityId', settings.uvEntityId, 'UV sensor')}${sensorSelect('sunriseEntityId', settings.sunriseEntityId, 'Sunrise sensor', true)}${sensorSelect('sunsetEntityId', settings.sunsetEntityId, 'Sunset sensor', true)}${entitySelect('forecastEntityId',settings.forecastEntityId,'Forecast entity')}<div class="field-row"><div class="field"><label>Forecast attribute</label><input class="settings-input" name="forecastAttribute" value="${escapeHtml(settings.forecastAttribute||'forecast')}"></div><div class="field"><label>Forecast items</label><input class="settings-input" type="number" min="1" max="12" name="forecastLimit" value="${escapeHtml(settings.forecastLimit||6)}"></div></div>${[['showCondition','Condition'],['showHumidity','Humidity'],['showWind','Wind'],['showPrecipitation','Rain probability'],['showUv','UV'],['showSun','Sunrise and sunset'],['showForecast','Forecast']].map(([key,label])=>`<label class="checkbox-row"><input type="checkbox" name="${key}" ${settings[key]!==false?'checked':''}> ${label}</label>`).join('')}`;
+
+      body = '<div class="field"><label>Data source</label><select class="settings-input" name="weatherSource"><option value="entities" ' + (settings.weatherSource !== 'openweathermap' ? 'selected' : '') + '>Remote / Home Assistant entities</option><option value="openweathermap" ' + (settings.weatherSource === 'openweathermap' ? 'selected' : '') + '>OpenWeatherMap API</option></select></div>' +
+        '<section class="settings-section"><h3>OpenWeatherMap (when selected)</h3><p class="muted">Set the API key under Settings → Weather. Use a city (e.g. Berlin,DE) or coordinates; coordinates take priority.</p>' +
+        '<div class="field"><label>City, country</label><input class="settings-input" name="openWeatherLocation" value="' + escapeHtml(settings.openWeatherLocation || '') + '" placeholder="Berlin,DE"></div>' +
+        '<div class="field-row"><div class="field"><label>Latitude</label><input class="settings-input" type="number" step="any" min="-90" max="90" name="openWeatherLat" value="' + escapeHtml(settings.openWeatherLat || '') + '"></div>' +
+        '<div class="field"><label>Longitude</label><input class="settings-input" type="number" step="any" min="-180" max="180" name="openWeatherLon" value="' + escapeHtml(settings.openWeatherLon || '') + '"></div></div>' +
+        '<div class="field"><label>Units</label><select class="settings-input" name="openWeatherUnits">' +
+        [['metric','Metric (°C, m/s)'], ['imperial','Imperial (°F, mph)'], ['standard','Standard (K, m/s)']].map(([value,label])=>'<option value="'+value+'" '+((settings.openWeatherUnits||'metric')===value?'selected':'')+'>'+label+'</option>').join('') +
+        '</select><small>Descriptions follow the dashboard language. Forecast refreshes every 10 minutes; the free APIs do not provide UV index.</small></div></section>' + body;
     } else if (type === 'text') {
       body = `<div class="field"><label>Heading</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || '')}"></div><label class="checkbox-row"><input type="checkbox" name="showHeading" ${settings.showHeading !== false ? 'checked' : ''}> Show heading</label><label class="checkbox-row"><input type="checkbox" name="dividerBelowHeading" ${settings.dividerBelowHeading ? 'checked' : ''}> Divider below heading</label><div class="field"><label>Text</label><textarea class="settings-input settings-textarea" name="body">${escapeHtml(settings.body || '')}</textarea></div><label class="checkbox-row"><input type="checkbox" name="showBody" ${settings.showBody !== false ? 'checked' : ''}> Show text</label><label class="checkbox-row"><input type="checkbox" name="dividerBelowBody" ${settings.dividerBelowBody ? 'checked' : ''}> Divider below text</label>`;
     } else if (type === 'custom_code') {
@@ -7075,7 +7181,7 @@ function cleanupCustomWidgetScript(itemId) {
 }
 
 
-const RUNTIME_WIDGET_TYPES = new Set(['connection','power']);
+const RUNTIME_WIDGET_TYPES = new Set(['connection','power','weather']);
 
 function itemContainsCamera(item) {
   if (!item) return false;
@@ -8840,4 +8946,5 @@ init().catch((error) => {
   app.innerHTML = `<main class="compatibility-error"><h1>${escapeHtml(translateDashboardText('Dashboard could not start'))}</h1><p>${escapeHtml(translateDashboardText(error?.message || String(error)))}</p><button onclick="location.reload()">${escapeHtml(translateDashboardText('Reload'))}</button></main>`;
 });
 setInterval(updateLiveWidgets, 1000);
+setInterval(refreshOpenWeatherWidgets, 60000);
 setInterval(() => { if (state.config) updateMarquees(); }, 15000);
