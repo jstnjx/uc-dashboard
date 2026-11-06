@@ -164,7 +164,7 @@ const DEFAULT_SIZES = {
   weather: { w: 12, h: 8 },
   activity_launcher: { w: 16, h: 10 },
   camera: { w: 12, h: 10 },
-  conditional: { w: 16, h: 10 },
+  conditional: { w: 24, h: 12 },
   divider_horizontal: { w: 24, h: 2 },
   divider_vertical: { w: 2, h: 8 },
   text: { w: 8, h: 4 },
@@ -4610,7 +4610,7 @@ function conditionalChildVisible(child) {
 function renderNestedWidget(item, options = {}) {
   const isSystem = item.kind === 'system';
   const entity = isSystem ? null : entityForItem(item);
-  const visible = options.fixedSlot ? conditionalChildVisible(item) : widgetConditionsMatch(item);
+  const visible = options.fixedSlot && state.editMode ? true : options.fixedSlot ? conditionalChildVisible(item) : widgetConditionsMatch(item);
   const unavailableMode = widgetUnavailableMode(item);
   if ((!visible || unavailableMode === 'hide') && !state.editMode) { const fallback=normalizeFallback(item.settings?.fallback); if(fallback.mode==='hide'||fallback.mode==='none')return ''; }
   const standalone = Boolean(options.standalone);
@@ -7018,6 +7018,12 @@ function previewItemFromForm(form, item) {
       else if (typeof fallback === 'boolean') preview.settings[key] = data.get(key) === 'on';
       else if (data.has(key)) preview.settings[key] = String(data.get(key) ?? fallback);
     }
+    if (preview.widgetType === 'conditional') {
+      const ids = new Set(data.getAll('containerItem').map(String));
+      const candidates = containerCandidates(item);
+      preview.settings.items = candidates.filter((candidate) => ids.has(candidate.id)).map((candidate) => structuredClone(candidate));
+      applyConditionalChildrenFromForm(preview.settings.items, data, preview.settings);
+    }
     if (preview.widgetType === 'entity_template') {
       preview.settings.entityId = String(data.get('entityId') || '');
       preview.settings.templateColumns = String(Math.max(1, Math.min(6, Number(data.get('templateColumns')) || 2)));
@@ -7211,7 +7217,7 @@ function renderWidgetSettingsModal() {
     } else if (type === 'camera') {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Camera')}"></div><div class="field"><label>Stream or image URL</label><input class="settings-input" name="sourceUrl" value="${escapeHtml(settings.sourceUrl || '')}" placeholder="rtsp://user:password@camera/stream"></div><div class="field"><label>Source type</label><select class="settings-input" name="sourceType">${[['auto','Automatic'],['go2rtc','go2rtc RTSP output (MSE / WebRTC)'],...(!state.settings.onRemote ? [['generic_rtsp','Generic RTSP (external FFmpeg)']] : []),['video','Browser-compatible video'],['image','Still/MJPEG image']].map(([value,label]) => `<option value="${value}" ${settings.sourceType === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>go2rtc API URL override</label><input class="settings-input" name="go2rtcApiUrl" value="${escapeHtml(settings.go2rtcApiUrl || '')}" placeholder="http://go2rtc-host:1984"><small>Optional. For an RTSP URL on port 8554, the dashboard automatically uses the same host on port 1984.</small></div><div class="field"><label>go2rtc stream name override</label><input class="settings-input" name="go2rtcStreamName" value="${escapeHtml(settings.go2rtcStreamName || '')}" placeholder="front-door"><small>Optional. Use this when the stream name cannot be derived from the pasted URL.</small></div><div class="field"><label>go2rtc playback modes</label><input class="settings-input" name="go2rtcMode" value="${escapeHtml(settings.go2rtcMode || 'webrtc,webrtc/tcp,mse,hls,mjpeg,mp4')}"><small>The integrated go2rtc player tries these modes in order. Recommended: webrtc,webrtc/tcp,mse,hls,mjpeg,mp4.</small></div><div class="field"><label>Poster URL</label><input class="settings-input" name="posterUrl" value="${escapeHtml(settings.posterUrl || '')}"></div><div class="field"><label>Image fit</label><select class="settings-input" name="objectFit">${['cover','contain','fill'].map((value) => `<option value="${value}" ${settings.objectFit === value ? 'selected' : ''}>${value}</option>`).join('')}</select></div><div class="field"><label>Camera crop zoom</label><input type="range" min="100" max="160" name="cameraZoom" value="${escapeHtml(settings.cameraZoom || 112)}"><small>Increase this when the embedded go2rtc player shows letterboxing or a control strip.</small></div><div class="field"><label>Still-image refresh interval (seconds)</label><input class="settings-input" type="number" min="2" max="3600" name="refreshSeconds" value="${escapeHtml(settings.refreshSeconds || 10)}"></div>${[['showTitle','Show title'],['autoplay','Autoplay'],['muted','Mute stream'],['controls','Show video controls']].map(([key,label]) => `<label class="checkbox-row"><input type="checkbox" name="${key}" ${settings[key] ? 'checked' : ''}> ${label}</label>`).join('')}<p class="muted">go2rtc streams use go2rtc’s official compatibility player. With a go2rtc API URL, an arbitrary RTSP URL can be relayed directly by go2rtc by leaving the stream-name override empty. Generic RTSP uses FFmpeg only in an external deployment. On Remote Two and Remote 3, RTSP requires go2rtc.</p>`;
     } else if (type === 'conditional') {
-      body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || '')}"></div>${entitySelect('conditionEntityId', settings.conditionEntityId, 'Condition entity')}<div class="field"><label>Operator</label><select class="settings-input" name="operator">${[['equals','Equals'],['not_equals','Does not equal'],['contains','Contains'],['greater','Greater than'],['less','Less than'],['truthy','Is active / truthy']].map(([value,label]) => `<option value="${value}" ${settings.operator === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>Comparison value</label><input class="settings-input" name="compareValue" value="${escapeHtml(settings.compareValue ?? 'ON')}"></div><div class="field"><label>Message when false</label><input class="settings-input" name="falseText" value="${escapeHtml(settings.falseText || 'Condition not met')}"></div><label class="checkbox-row"><input type="checkbox" name="invert" ${settings.invert ? 'checked' : ''}> Invert result</label><label class="checkbox-row"><input type="checkbox" name="hideWhenFalse" ${settings.hideWhenFalse ? 'checked' : ''}> Collapse completely when false</label><label class="checkbox-row"><input type="checkbox" name="layoutLocked" ${settings.layoutLocked ? 'checked' : ''}> Lock child order and layout</label>${conditionalItemOptions(item)}`;
+      body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || '')}"></div><section class="settings-section" data-conditional-classic-settings ${settings.layoutMode === 'fixed' ? 'hidden' : ''}><h3>Classic group condition</h3>${entitySelect('conditionEntityId', settings.conditionEntityId, 'Condition entity')}<div class="field"><label>Operator</label><select class="settings-input" name="operator">${[['equals','Equals'],['not_equals','Does not equal'],['contains','Contains'],['greater','Greater than'],['less','Less than'],['truthy','Is active / truthy']].map(([value,label]) => `<option value="${value}" ${settings.operator === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>Comparison value</label><input class="settings-input" name="compareValue" value="${escapeHtml(settings.compareValue ?? 'ON')}"></div><div class="field"><label>Message when false</label><input class="settings-input" name="falseText" value="${escapeHtml(settings.falseText || 'Condition not met')}"></div><label class="checkbox-row"><input type="checkbox" name="invert" ${settings.invert ? 'checked' : ''}> Invert result</label><label class="checkbox-row"><input type="checkbox" name="hideWhenFalse" ${settings.hideWhenFalse ? 'checked' : ''}> Collapse completely when false</label><label class="checkbox-row"><input type="checkbox" name="layoutLocked" ${settings.layoutLocked ? 'checked' : ''}> Lock child order and layout</label></section>${conditionalItemOptions(item)}`;
     } else if (type === 'media_browser') {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Media')}"></div>${entitySelect('mediaEntityId', settings.mediaEntityId, 'Media player', ['media_player'])}<label class="checkbox-row"><input type="checkbox" name="transparentBackground" ${settings.transparentBackground === true ? 'checked' : ''}> Remove semi-transparent background (widget and media cards)</label>${mediaPresentationEditor(settings)}<div class="field"><label>Default play action</label><select class="settings-input" name="playAction">${[['PLAY_NOW','Play now'],['PLAY_NEXT','Play next'],['ADD_TO_QUEUE','Add to queue']].map(([value,label]) => `<option value="${value}" ${settings.playAction === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><label class="checkbox-row"><input type="checkbox" name="showArtwork" ${settings.showArtwork !== false ? 'checked' : ''}> Show artwork</label><label class="checkbox-row"><input type="checkbox" name="showSubtitle" ${settings.showSubtitle !== false ? 'checked' : ''}> Show subtitle / artist</label><label class="checkbox-row"><input type="checkbox" name="showSearch" ${settings.showSearch !== false ? 'checked' : ''}> Show search when supported</label>`;
     } else if (type === 'tab_container') {
@@ -8148,6 +8154,31 @@ function handleActionClick(event, explicitActionNode = null) {
   else if (action === 'test-unfolded-tools-connection') { testUnfoldedToolsConnection(actionNode.closest('[data-settings-form]'), actionNode); }
   else if (action === 'refresh-unfolded-tools-cache') { refreshUnfoldedToolsSettingsStatus(actionNode.closest('[data-settings-form]')); }
   else if (action === 'clear-unfolded-tools-cache') { clearUnfoldedToolsCache(actionNode.closest('[data-settings-form]')); }
+  else if (action === 'conditional-canvas-preset') {
+    const form = actionNode.closest('[data-widget-settings-form]');
+    if (form) {
+      const set = (name, value) => { const field = form.querySelector('[name="' + name + '"]'); if (field) field.value = String(value); };
+      set('layoutMode', 'fixed'); set('gridColumns', 24); set('gridRows', 12); set('gridGap', 8);
+      for (const field of form.querySelectorAll('[data-conditional-fixed-settings]')) field.hidden = false;
+      for (const field of form.querySelectorAll('[data-conditional-legacy-settings], [data-conditional-classic-settings]')) field.hidden = true;
+      const counters = {};
+      for (const row of form.querySelectorAll('[data-conditional-slot-row]')) {
+        const type = row.dataset.childType;
+        const target = type === 'media_player' ? [0,0] :
+          type === 'media_browser' ? [0,6] :
+            type === 'camera' ? [12,0] :
+              type === 'activity_launcher' ? [12,6] : null;
+        const index = counters[type] || 0; counters[type] = index + 1;
+        const fallback = [12 * (index % 2), 6 * (Math.floor(index / 2) % 2)];
+        const [x,y] = target || fallback;
+        for (const [name,value] of [['X',x],['Y',y],['W',12],['H',6]]) {
+          const input = row.querySelector('[name="slot' + name + ':' + row.dataset.itemId + '"]');
+          if (input) input.value = String(value);
+        }
+      }
+      scheduleWidgetEditorPreview(form);
+    }
+  }
   else if (action === 'open-navigation-editor') { state.modal = { type: 'navigation-settings' }; renderModalRoot(); }
   else if (action === 'open-statusbar-editor') { state.modal = { type: 'statusbar-settings' }; renderModalRoot(); }
   else if (action === 'statusbar-item-left') moveStatusbarEditorItem(actionNode.closest('[data-statusbar-layout-item]'), -1);
@@ -8714,6 +8745,12 @@ document.addEventListener('keydown', (event) => {
   submitMediaBrowserSearch(event.target.closest('[data-media-browser-search]'));
 });
 modalRoot.addEventListener('change', async (event) => {
+  if (event.target.matches('select[name="layoutMode"]') && event.target.closest('[data-widget-settings-form]')) {
+    const form = event.target.closest('[data-widget-settings-form]');
+    const fixed = event.target.value === 'fixed';
+    for (const node of form.querySelectorAll('[data-conditional-fixed-settings]')) node.hidden = !fixed;
+    for (const node of form.querySelectorAll('[data-conditional-legacy-settings], [data-conditional-classic-settings]')) node.hidden = fixed;
+  }
   if (event.target.matches('select[name="weatherSource"]')) {
     const widgetForm = event.target.closest('[data-widget-settings-form]');
     const entityFields = widgetForm?.querySelector('[data-weather-entity-fields]');
