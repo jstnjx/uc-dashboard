@@ -6585,5 +6585,5 @@ body.editing .remote-entity-grid {
   object-fit: cover;
 }
 @media (max-width: 520px) {
-  .media-widget.artwork-square .media-visual { width: min(100%, 156px); }
+  .media-widget.artwork-square .media-visual { width: min(100%, 156px, calc(100cqh - 24px)); }
 }
