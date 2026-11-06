@@ -103,6 +103,44 @@ Additional widgets include cameras, clocks, weather, room summaries, history gra
 
 The default for each role is **Widget media player**, keeping all existing widgets compatible. Live source changes update the widget without modifying its position or size. Sources must be `media_player` entities exposed by the Remote. The widget's existing visibility conditions, element toggles, appearance, and media browser modal remain supported.
 
+### Native Conditional card layouts
+
+The **Conditional** widget now supports a classic conditional group or a **Fixed grid** layout. In Fixed grid mode, the Conditional card works as a single layout canvas with **up to 24 columns** and **48 rows**, rather than rearranging children when their visibility changes.
+
+1. Add a Conditional card and set **Layout mode → Fixed grid** in the card's Content editor.
+2. Choose columns, rows, and spacing (for a 2×2 wall dashboard, use 24 columns and 12 rows).
+3. Select existing widgets to move inside, or add new widgets from the same Conditional card editor.
+4. For each child set **X, Y, W, H** and optionally **Show when entity**. Use **On / running**, **Off / stopped**, or an explicit comparison.
+5. Assign mutually exclusive widgets identical coordinates. When their conditions change, one replaces the other without moving unrelated widgets or restarting an unchanged camera stream.
+
+The **Media + camera 2×2 layout** preset fills 12×6 regions as follows:
+
+| Widget type | X | Y | W | H |
+|---|---:|---:|---:|---:|
+| Media players (all share one position) | 0 | 0 | 12 | 6 |
+| Media browsers (all share one position) | 0 | 6 | 12 | 6 |
+| Camera | 12 | 0 | 12 | 6 |
+| Activity launcher | 12 | 6 | 12 | 6 |
+
+For example, two different media player widgets can occupy X=0, Y=0 and be shown only when their respective Apple TV or Playstation 5 activity is on. The two media browsers can likewise share X=0, Y=6. The camera and launcher stay stationary. You may further customize each contained widget's appearance, media source, and advanced conditions independently.
+
+The card-level condition fields remain available in **Classic** mode; fixed layout uses independent child conditions instead. Existing Conditional cards remain in Classic mode until changed.
+
+### Camera and stream presentation
+
+The Camera widget's **Stream rendering** section offers:
+
+- **Automatic** (recommended): use the built-in native WebRTC/MSE player for go2rtc, with fallback to the embedded player after repeated errors.
+- **Native video**: use the built-in video element only—no nested iframe or player chrome.
+- **Legacy iframe**: keep the official embedded go2rtc page for compatibility.
+- **Fit:** Cover fills the widget but crops edges; Contain always displays the full source with empty space when aspect ratios differ; Stretch fills and may distort.
+- **Image focus:** center or align the picture left, right, top or bottom.
+- **Native video zoom:** 100% preserves the fitted frame. Increase only when intentional cropping is desired.
+- **Frame border:** optional. The native player defaults to a borderless full-bleed viewport.
+- **Legacy iframe crop controls:** disabled by default. This does not control the video layout inside a cross-origin iframe.
+
+For a full-frame security camera, choose **Native video + Contain + 100% zoom**. To fill a dashboard tile without letterboxing, select **Cover**; some image cropping is unavoidable when the source and tile aspect ratios differ.
+
 ### Kiosk and screensaver
 
 - Full-screen kiosk mode
