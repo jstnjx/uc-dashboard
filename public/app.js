@@ -6739,10 +6739,10 @@ function conditionalItemOptions(containerItem) {
     escapeHtml(settings.gridGap ?? 8) + '"></div><button type="button" class="pill-button" data-action="conditional-canvas-preset">' +
     materialSymbol('dashboard_customize',18) + ' Use media + camera 2×2 layout (24 columns)</button>' +
     '<p class="muted">Coordinates start at X=0, Y=0. Each widget keeps its own width and height. For example, two media players can both use X=0 / Y=0 / W=12 / H=6 and have different activity conditions.</p>' +
-    (children.length ? '<div class="conditional-slot-list">' +
-    children.map((child,index)=>conditionalCanvasChildEditor(child,index,settings)).join('') + '</div>' :
-    '<p class="muted">Select or add widgets below, then configure their positions and conditions here.</p>') +
-    '</section>';
+    '<div class="conditional-slot-list" data-conditional-slot-list>' +
+    (children.length ? children.map((child,index)=>conditionalCanvasChildEditor(child,index,settings)).join('') :
+    '<p class="muted">Select or add widgets below to configure positions and conditions.</p>') +
+    '</div></section>';
   const legacy = '<section class="settings-section" data-conditional-legacy-settings ' +
     (fixed ? 'hidden' : '') + '><h3>Classic child sizing</h3><div class="container-child-layout-list">' +
     children.map((child,index)=>childLayoutEditor(containerItem,child,index)).join('') + '</div></section>';
@@ -8795,6 +8795,27 @@ document.addEventListener('keydown', (event) => {
   submitMediaBrowserSearch(event.target.closest('[data-media-browser-search]'));
 });
 modalRoot.addEventListener('change', async (event) => {
+  if (event.target.matches('input[name="containerItem"]')) {
+    const form = event.target.closest('[data-widget-settings-form]');
+    const { item } = form ? findDashboardItem(form.dataset.itemId) : { item:null };
+    const host = form?.querySelector('[data-conditional-slot-list]');
+    if (item?.widgetType === 'conditional' && host) {
+      const saved = new Map([...host.querySelectorAll('input[name],select[name]')]
+        .map((input) => [input.name, input.value]));
+      const selected = new Set([...form.querySelectorAll('input[name="containerItem"]:checked')]
+        .map((input) => input.value));
+      const settings = { ...(item.settings || {}),
+        gridColumns: form.querySelector('[name="gridColumns"]')?.value || 24,
+        gridRows: form.querySelector('[name="gridRows"]')?.value || 12 };
+      const children = containerCandidates(item).filter((child) => selected.has(child.id));
+      host.innerHTML = children.length
+        ? children.map((child,index) => conditionalCanvasChildEditor(child,index,settings)).join('')
+        : '<p class="muted">Select or add widgets below to configure positions and conditions.</p>';
+      for (const input of host.querySelectorAll('input[name],select[name]')) {
+        if (saved.has(input.name)) input.value = saved.get(input.name);
+      }
+    }
+  }
   if (event.target.matches('select[name="layoutMode"]') && event.target.closest('[data-widget-settings-form]')) {
     const form = event.target.closest('[data-widget-settings-form]');
     const fixed = event.target.value === 'fixed';
