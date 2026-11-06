@@ -7433,9 +7433,7 @@ function patchConditionalFixedContainer(node, item, entityIds, runtime) {
       if (existing) { cleanupCustomWidgetScript(child.id); existing.remove(); }
       continue;
     }
-    const relevant = runtime
-      ? (child.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(child.widgetType) : child.entityType === 'media_player')
-      : itemReferencesEntity(child, entityIds);
+    const relevant = (runtime && (child.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(child.widgetType) : child.entityType === 'media_player')) || itemReferencesEntity(child, entityIds);
     if (existing) {
       // Never tear down an active camera or a container holding a camera.
       if (itemContainsCamera(child)) {
@@ -7470,7 +7468,7 @@ function patchCameraSafeContainer(node, item, entityIds, runtime) {
   const groups = item.widgetType === 'tab_container' ? (item.settings?.tabs || []).map((tab) => tab.items || []) : [item.settings?.items || []];
   for (const children of groups) for (const child of children) {
     if (child.kind === 'system' && child.widgetType === 'camera') continue;
-    const relevant = runtime ? (child.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(child.widgetType) : child.entityType === 'media_player') : itemReferencesEntity(child, entityIds);
+    const relevant = (runtime && (child.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(child.widgetType) : child.entityType === 'media_player')) || itemReferencesEntity(child, entityIds);
     if (!relevant) continue;
     const childNode = [...node.querySelectorAll(`[data-item-id="${CSS.escape(child.id)}"]`)].find((candidate) => candidate.closest('[data-item-id]')?.dataset.itemId === child.id);
     if (!childNode) continue;
@@ -7518,7 +7516,7 @@ function patchVisibleDashboard({ entityIds = null, runtime = false } = {}) {
   const grid = app.querySelector('.remote-entity-grid');
   if (grid) {
     for (const item of dashboard.items || []) {
-      const relevant = runtime ? (item.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(item.widgetType) : item.entityType === 'media_player') : itemReferencesEntity(item, entityIds);
+      const relevant = (runtime && (item.kind === 'system' ? RUNTIME_WIDGET_TYPES.has(item.widgetType) : item.entityType === 'media_player')) || itemReferencesEntity(item, entityIds);
       if (!relevant) continue;
       const node = [...grid.children].find((candidate) => candidate.dataset?.itemId === item.id);
       const signature = runtime ? runtimeWidgetSignature(item) : '';
