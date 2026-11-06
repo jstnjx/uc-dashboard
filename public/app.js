@@ -6640,15 +6640,91 @@ function carouselOrderEditor(containerItem, selectedItems = directContainerItems
   return `<section class="settings-section carousel-card-order"><div class="settings-section-heading"><div><h3>Card order</h3><p class="muted">Drag cards or use the arrow buttons to set the carousel sequence.</p></div></div><div class="carousel-card-order-list" data-carousel-order-list>${selectedItems.map((child,index)=>`<article draggable="true" data-carousel-order-row data-item-id="${escapeHtml(child.id)}"><span class="carousel-order-handle">${materialSymbol('drag_indicator',18)}</span><strong>${escapeHtml(widgetEditorLabel(child))}</strong><small>${index+1}</small><input type="hidden" name="carouselOrder" value="${escapeHtml(child.id)}"><div><button type="button" data-action="carousel-order-move" data-direction="-1" title="Move earlier">${materialSymbol('arrow_upward',17)}</button><button type="button" data-action="carousel-order-move" data-direction="1" title="Move later">${materialSymbol('arrow_downward',17)}</button></div></article>`).join('')}</div></section>`;
 }
 
-function containerItemOptions(containerItem, selectedItems = directContainerItems(containerItem), legend = 'Contained widgets') {
+function containerItemOptions(containerItem, selectedItems = directContainerItems(containerItem), legend = 'Contained widgets', showChildLayout = true) {
   const candidates = containerCandidates(containerItem);
   const selectedIds = new Set((selectedItems || []).map((candidate) => candidate.id));
-  return `<fieldset class="field entity-checklist"><legend>${escapeHtml(legend)}</legend><small>Select existing dashboard widgets to move into this container. Unchecking a contained widget moves it back to the dashboard.</small>${candidates.length ? candidates.map((candidate) => { const entity = candidate.kind === 'system' ? null : entityForItem(candidate); const label = candidate.kind === 'system' ? SYSTEM_WIDGETS[candidate.widgetType]?.label || candidate.widgetType : localName(entity?.name || candidate.snapshot?.name || candidate.entityId); return `<label class="checkbox-row"><input type="checkbox" name="containerItem" value="${escapeHtml(candidate.id)}" ${selectedIds.has(candidate.id) ? 'checked' : ''}> <span>${marquee(label)}<small>${candidate.kind === 'system' ? 'Widget' : TYPE_LABELS[entity?.entity_type || candidate.entityType] || candidate.entityType}</small></span></label>`; }).join('') : '<p class="muted">No existing widgets are available.</p>'}</fieldset>${carouselOrderEditor(containerItem, selectedItems)}${selectedItems?.length ? `<section class="settings-section"><h3>Child layout</h3><div class="container-child-layout-list">${selectedItems.map((child,index)=>childLayoutEditor(containerItem,child,index)).join('')}</div></section>` : ''}${nestedWidgetAddControls(containerItem)}`;
+  return `<fieldset class="field entity-checklist"><legend>${escapeHtml(legend)}</legend><small>Select existing dashboard widgets to move into this container. Unchecking a contained widget moves it back to the dashboard.</small>${candidates.length ? candidates.map((candidate) => { const entity = candidate.kind === 'system' ? null : entityForItem(candidate); const label = candidate.kind === 'system' ? SYSTEM_WIDGETS[candidate.widgetType]?.label || candidate.widgetType : localName(entity?.name || candidate.snapshot?.name || candidate.entityId); return `<label class="checkbox-row"><input type="checkbox" name="containerItem" value="${escapeHtml(candidate.id)}" ${selectedIds.has(candidate.id) ? 'checked' : ''}> <span>${marquee(label)}<small>${candidate.kind === 'system' ? 'Widget' : TYPE_LABELS[entity?.entity_type || candidate.entityType] || candidate.entityType}</small></span></label>`; }).join('') : '<p class="muted">No existing widgets are available.</p>'}</fieldset>${carouselOrderEditor(containerItem, selectedItems)}${showChildLayout && selectedItems?.length ? `<section class="settings-section"><h3>Child layout</h3><div class="container-child-layout-list">${selectedItems.map((child,index)=>childLayoutEditor(containerItem,child,index)).join('')}</div></section>` : ''}${nestedWidgetAddControls(containerItem)}`;
+}
+
+function conditionalCanvasChildEditor(child, index, settings) {
+  const slot = conditionalSlot(child, index, settings);
+  const condition = child.settings?.conditionalDisplay || {};
+  const entityOptions = accessibleEntities().filter((entity) => entity.entity_id)
+    .sort((a,b) => localName(a.name).localeCompare(localName(b.name)))
+    .map((entity) => '<option value="' + escapeHtml(entity.entity_id) + '" ' +
+      (condition.entityId === entity.entity_id ? 'selected' : '') + '>' +
+      escapeHtml(localName(entity.name)) + ' · ' + escapeHtml(entity.entity_type) + '</option>').join('');
+  const input = (name, value, max) =>
+    '<label>' + name + '<input type="number" class="settings-input" min="' +
+    (name === 'X' || name === 'Y' ? '0' : '1') + '" max="' + max +
+    '" step="1" name="slot' + name + ':' + escapeHtml(child.id) + '" value="' + value + '"></label>';
+  return '<article class="conditional-slot-row" data-conditional-slot-row data-child-type="' +
+    escapeHtml(child.kind === 'system' ? child.widgetType : child.entityType) + '" data-item-id="' +
+    escapeHtml(child.id) + '"><div class="conditional-slot-head"><strong>' +
+    escapeHtml(widgetEditorLabel(child)) + '</strong><small>' + escapeHtml(child.kind === 'system' ? 'Widget' : 'Entity') +
+    ' · Slot ' + (index + 1) + '</small></div><div class="conditional-slot-geometry">' +
+    input('X', slot.x, 23) + input('Y', slot.y, 47) + input('W', slot.w, 24) + input('H', slot.h, 48) +
+    '</div><div class="field"><label>Show when entity (optional)</label><select class="settings-input" name="slotEntity:' +
+    escapeHtml(child.id) + '"><option value="">Always show</option>' + entityOptions + '</select></div>' +
+    '<div class="field-row"><div class="field"><label>Condition</label><select class="settings-input" name="slotOperator:' +
+    escapeHtml(child.id) + '">' + [['truthy','On / running'],['falsy','Off / stopped'],['equals','Equals'],['not_equals','Does not equal'],['contains','Contains']].map(([value,label]) =>
+    '<option value="' + value + '" ' + ((condition.operator || 'truthy') === value ? 'selected' : '') + '>' + label + '</option>').join('') +
+    '</select></div><div class="field"><label>Value (for comparisons)</label><input class="settings-input" name="slotValue:' +
+    escapeHtml(child.id) + '" value="' + escapeHtml(condition.value ?? 'ON') + '"></div></div></article>';
 }
 
 function conditionalItemOptions(containerItem) {
-  return containerItemOptions(containerItem);
+  const settings = { ...SYSTEM_WIDGETS.conditional.settings, ...(containerItem.settings || {}) };
+  const fixed = settings.layoutMode === 'fixed';
+  const children = directContainerItems(containerItem);
+  const layout = '<section class="settings-section"><h3>Layout mode</h3><div class="field"><label>Arrangement</label><select class="settings-input" name="layoutMode">' +
+    '<option value="auto" ' + (!fixed ? 'selected' : '') + '>Classic conditional group</option>' +
+    '<option value="fixed" ' + (fixed ? 'selected' : '') + '>Fixed grid · independently conditional widgets</option>' +
+    '</select></div><p class="muted">Fixed grid keeps every widget in its assigned X/Y slot. Multiple widgets can share the exact same position and switch by activity or any other entity condition.</p></section>';
+  const canvas = '<section class="settings-section" data-conditional-fixed-settings ' +
+    (fixed ? '' : 'hidden') + '><h3>Grid layout</h3><div class="field-row"><div class="field"><label>Columns</label><input class="settings-input" type="number" min="1" max="24" name="gridColumns" value="' +
+    escapeHtml(settings.gridColumns || 24) + '"></div><div class="field"><label>Rows</label><input class="settings-input" type="number" min="1" max="48" name="gridRows" value="' +
+    escapeHtml(settings.gridRows || 12) + '"></div></div><div class="field"><label>Gap (px)</label><input class="settings-input" type="number" min="0" max="32" name="gridGap" value="' +
+    escapeHtml(settings.gridGap ?? 8) + '"></div><button type="button" class="pill-button" data-action="conditional-canvas-preset">' +
+    materialSymbol('dashboard_customize',18) + ' Use media + camera 2×2 layout (24 columns)</button>' +
+    '<p class="muted">Coordinates start at X=0, Y=0. Each widget keeps its own width and height. For example, two media players can both use X=0 / Y=0 / W=12 / H=6 and have different activity conditions.</p>' +
+    (children.length ? '<div class="conditional-slot-list">' +
+    children.map((child,index)=>conditionalCanvasChildEditor(child,index,settings)).join('') + '</div>' :
+    '<p class="muted">Select or add widgets below, then configure their positions and conditions here.</p>') +
+    '</section>';
+  const legacy = '<section class="settings-section" data-conditional-legacy-settings ' +
+    (fixed ? 'hidden' : '') + '><h3>Classic child sizing</h3><div class="container-child-layout-list">' +
+    children.map((child,index)=>childLayoutEditor(containerItem,child,index)).join('') + '</div></section>';
+  return layout + canvas + legacy + containerItemOptions(containerItem, children, 'Widgets in this Conditional card', false);
 }
+
+function applyConditionalChildrenFromForm(children, data, settings) {
+  const grid = { gridColumns: data.get('gridColumns') || settings?.gridColumns,
+    gridRows: data.get('gridRows') || settings?.gridRows };
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index];
+    child.settings ||= {};
+    const fallback = conditionalSlot(child, index, grid);
+    const read = (prefix, alternative) => {
+      const value = data.get(prefix + ':' + child.id);
+      return value === null || value === '' ? alternative : Number(value);
+    };
+    child.settings.conditionalSlot = conditionalSlot({
+      settings: { conditionalSlot: {
+        x: read('slotX', fallback.x), y: read('slotY', fallback.y),
+        w: read('slotW', fallback.w), h: read('slotH', fallback.h)
+      }}
+    }, index, grid);
+    const previous = child.settings.conditionalDisplay || {};
+    const operator = String(data.get('slotOperator:' + child.id) || previous.operator || 'truthy');
+    child.settings.conditionalDisplay = {
+      entityId: String(data.get('slotEntity:' + child.id) ?? previous.entityId ?? ''),
+      operator: ['truthy','falsy','equals','not_equals','contains'].includes(operator) ? operator : 'truthy',
+      value: String(data.get('slotValue:' + child.id) ?? previous.value ?? 'ON')
+    };
+  }
+}
+
 
 function returnUnselectedContainerItems(dashboard, containerItem, previousItems, nextItems) {
   const nextIds = new Set((nextItems || []).map((candidate) => candidate.id));
@@ -6720,6 +6796,7 @@ function updateGenericContainerFromForm(dashboard, item, data) {
   }
   returnUnselectedContainerItems(dashboard, item, previous, nextItems);
   for (const child of nextItems) { child.settings ||= {}; child.settings.containerLayout = normalizeChildLayout({ width:data.get(`childWidth:${child.id}`), height:data.get(`childHeight:${child.id}`), align:data.get(`childAlign:${child.id}`) }); }
+  if (item.widgetType === 'conditional') applyConditionalChildrenFromForm(nextItems, data, item.settings);
   return nextItems;
 }
 
