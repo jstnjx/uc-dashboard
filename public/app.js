@@ -265,7 +265,7 @@ const SYSTEM_WIDGETS = {
     label: 'Media browser',
     description: 'Browse, search, and play media exposed by a media-player entity.',
     icon: 'library_music',
-    settings: { title: 'Media', mediaEntityId: '', pageSize: '12', columns: '4', showArtwork: true, showSearch: true, showSubtitle: true, playAction: 'PLAY_NOW', layoutMode: 'grid', swiperSlidesPerView: '3', swiperSpaceBetween: '18', swiperCentered: true, swiperLoop: false, swiperNavigation: true, swiperPagination: true }
+    settings: { title: 'Media', mediaEntityId: '', pageSize: '12', columns: '4', transparentBackground: false, showArtwork: true, showSearch: true, showSubtitle: true, playAction: 'PLAY_NOW', layoutMode: 'grid', swiperSlidesPerView: '3', swiperSpaceBetween: '18', swiperCentered: true, swiperLoop: false, swiperNavigation: true, swiperPagination: true }
   },
   tab_container: {
     label: 'Tab container',
@@ -4328,36 +4328,51 @@ function artworkUrl(value) {
   }
 }
 
+function mediaPlayerSourceEntity(entity, settings, key) {
+  const id = String(settings?.[key] || '').trim();
+  const candidate = id && state.entities.get(id);
+  return candidate?.entity_type === 'media_player' ? candidate : entity;
+}
+
 function renderMediaPlayer(entity, item) {
-  const attrs = entity.attributes || {};
+  const settings = item.settings || {};
+  const metadataEntity = mediaPlayerSourceEntity(entity, settings, 'metadataEntityId');
+  const artworkEntity = mediaPlayerSourceEntity(entity, settings, 'artworkEntityId');
+  const playbackEntity = mediaPlayerSourceEntity(entity, settings, 'playbackEntityId');
+  const volumeEntity = mediaPlayerSourceEntity(entity, settings, 'volumeEntityId');
+  const progressEntity = mediaPlayerSourceEntity(entity, settings, 'progressEntityId');
+  const attrs = metadataEntity.attributes || {};
+  const volumeAttrs = volumeEntity.attributes || {};
+  const progressAttrs = progressEntity.attributes || {};
   const elements = itemElements(item, 'media_player');
-  const playing = entityState(entity) === 'PLAYING';
-  const volume = Math.max(0, Math.min(100, Number(attrs.volume ?? 0)));
-  const muted = Boolean(attrs.muted);
-  const artwork = elements.showArtwork ? artworkUrl(mediaArtwork(entity)) : '';
-  const title = attrs.media_title || item.settings?.customTitle || localName(entity.name);
-  const artist = attrs.media_artist || attrs.media_album || attrs.media_source || attrs.media_type || '';
-  const basePosition = Number(attrs.media_position ?? attrs.position ?? 0);
-  const duration = Number(attrs.media_duration ?? attrs.duration ?? 0);
-  const updatedAt = Date.parse(attrs.media_position_updated_at || attrs.position_updated_at || '');
-  const position = playing && Number.isFinite(updatedAt) ? Math.min(duration || Number.POSITIVE_INFINITY, basePosition + Math.max(0, (Date.now() - updatedAt) / 1000)) : basePosition;
+  const playing = entityState(playbackEntity) === 'PLAYING';
+  const progressPlaying = entityState(progressEntity) === 'PLAYING';
+  const volume = Math.max(0, Math.min(100, Number(volumeAttrs.volume ?? 0)));
+  const muted = Boolean(volumeAttrs.muted);
+  const artwork = elements.showArtwork ? artworkUrl(mediaArtwork(artworkEntity)) : '';
+  const title = attrs.media_title || settings.customTitle || localName(metadataEntity.name);
+  const artist = settings.customSubtitle || attrs.media_artist || attrs.media_album || attrs.media_source || attrs.media_type || '';
+  const basePosition = Number(progressAttrs.media_position ?? progressAttrs.position ?? 0);
+  const duration = Number(progressAttrs.media_duration ?? progressAttrs.duration ?? 0);
+  const updatedAt = Date.parse(progressAttrs.media_position_updated_at || progressAttrs.position_updated_at || '');
+  const position = progressPlaying && Number.isFinite(updatedAt) ? Math.min(duration || Number.POSITIVE_INFINITY, basePosition + Math.max(0, (Date.now() - updatedAt) / 1000)) : basePosition;
   const progress = duration > 0 ? Math.max(0, Math.min(100, position / duration * 100)) : 0;
   const showIconFallback = !artwork && elements.showIcon;
   const copyParts = [];
   if (elements.showName) copyParts.push(`<small class="media-entity-name">${marquee(item.settings?.customTitle || localName(entity.name))}</small>`);
   if (elements.showTitle) copyParts.push(`<h3>${marquee(title)}</h3>`);
   if (elements.showArtist && artist) copyParts.push(`<p>${marquee(artist)}</p>`);
-  if (elements.showState) copyParts.push(`<p>${marquee(translatedEntityState(entity))}</p>`);
+  if (elements.showState) copyParts.push(`<p>${marquee(translatedEntityState(metadataEntity))}</p>`);
   const browserButton = elements.showMediaBrowser ? mediaBrowserButton(entity.entity_id, `Browse ${localName(entity.name)}`) : '';
-  return `<div class="media-widget ${artwork ? 'has-artwork' : ''}">
+  return `<div class="media-widget ${artwork ? 'has-artwork' : ''} ${settings.artworkShape === 'square' ? 'artwork-square' : ''}">
     ${(artwork || showIconFallback) ? `<div class="media-visual">${artwork ? `<img src="${escapeHtml(artwork)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('.media-visual').classList.add('image-error')">` : ''}<span class="media-fallback">${renderWidgetIcon(item, 'media_player', 64)}</span></div>` : ''}
     <div class="media-main">
       ${copyParts.length ? `<div class="media-copy">${copyParts.join('')}</div>` : ''}
-      ${elements.showProgress && duration > 0 ? `<div class="media-progress" title="${Math.round(position)} / ${Math.round(duration)} seconds" data-media-progress data-entity-id="${escapeHtml(entity.entity_id)}" data-base-position="${escapeHtml(basePosition)}" data-duration="${escapeHtml(duration)}" data-updated-at="${escapeHtml(attrs.media_position_updated_at || attrs.position_updated_at || '')}" data-playing="${playing}"><i style="width:${progress}%"></i></div>` : ''}
+      ${elements.showProgress && duration > 0 ? `<div class="media-progress" title="${Math.round(position)} / ${Math.round(duration)} seconds" data-media-progress data-entity-id="${escapeHtml(progressEntity.entity_id)}" data-base-position="${escapeHtml(basePosition)}" data-duration="${escapeHtml(duration)}" data-updated-at="${escapeHtml(progressAttrs.media_position_updated_at || progressAttrs.position_updated_at || '')}" data-playing="${progressPlaying}"><i style="width:${progress}%"></i></div>` : ''}
       ${(elements.showPlayback || elements.showVolume || browserButton) ? `<div class="media-controls">
-        ${elements.showPlayback ? `<div class="remote-button-group media-buttons"><button data-command="previous" data-entity-id="${escapeHtml(entity.entity_id)}">${icon('previous', 24)}</button><button class="primary" data-command="play_pause" data-entity-id="${escapeHtml(entity.entity_id)}">${icon(playing ? 'pause' : 'play', 28)}</button><button data-command="next" data-entity-id="${escapeHtml(entity.entity_id)}">${icon('next', 24)}</button></div>` : ''}
+        ${elements.showPlayback ? `<div class="remote-button-group media-buttons"><button data-command="previous" data-entity-id="${escapeHtml(playbackEntity.entity_id)}">${icon('previous', 24)}</button><button class="primary" data-command="play_pause" data-entity-id="${escapeHtml(playbackEntity.entity_id)}">${icon(playing ? 'pause' : 'play', 28)}</button><button data-command="next" data-entity-id="${escapeHtml(playbackEntity.entity_id)}">${icon('next', 24)}</button></div>` : ''}
         ${browserButton}
-        ${elements.showVolume ? `<label class="remote-slider"><button class="inline-icon-button" data-command="mute_toggle" data-entity-id="${escapeHtml(entity.entity_id)}">${icon(muted ? 'mute' : 'volume', 20)}</button><input type="range" min="0" max="100" value="${volume}" style="--range-value:${volume}%" data-range-command="volume" data-range-param="volume" data-entity-id="${escapeHtml(entity.entity_id)}"><b>${volume}</b></label>` : ''}
+        ${elements.showVolume ? `<label class="remote-slider"><button class="inline-icon-button" data-command="mute_toggle" data-entity-id="${escapeHtml(volumeEntity.entity_id)}">${icon(muted ? 'mute' : 'volume', 20)}</button><input type="range" min="0" max="100" value="${volume}" style="--range-value:${volume}%" data-range-command="volume" data-range-param="volume" data-entity-id="${escapeHtml(volumeEntity.entity_id)}"><b>${volume}</b></label>` : ''}
       </div>` : ''}
     </div>
   </div>`;
@@ -4817,7 +4832,7 @@ function renderMediaBrowser(item, settings, options = {}) {
 
   const search = settings.showSearch !== false && settings.mediaEntityId && canSearch ? `<div class="media-browser-search" data-media-browser-search data-item-id="${escapeHtml(item.id)}" role="search"><span>${materialSymbol('search', 19)}</span><input type="search" name="query" value="${escapeHtml(browser.query || '')}" placeholder="Search this library" autocomplete="off"><button type="button" data-action="media-browser-search" data-item-id="${escapeHtml(item.id)}" title="Search">${materialSymbol('arrow_forward', 19)}</button>${browser.searchResults ? `<button type="button" data-action="media-browser-clear-search" data-item-id="${escapeHtml(item.id)}" title="Clear search">${materialSymbol('close', 19)}</button>` : ''}</div>` : '';
   const paginationHtml = settings.mediaEntityId && !browser.error && items.length ? `<div class="media-browser-pagination"><button data-action="media-browser-page" data-item-id="${escapeHtml(item.id)}" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>${materialSymbol('chevron_left', 20)}</button><span>Page ${page} of ${pages}</span><button data-action="media-browser-page" data-item-id="${escapeHtml(item.id)}" data-page="${page + 1}" ${page >= pages ? 'disabled' : ''}>${materialSymbol('chevron_right', 20)}</button></div>` : '';
-  return `<div class="media-browser-widget ${options.modal ? 'media-browser-modal-content' : ''} layout-${escapeHtml(settings.layoutMode || 'grid')} ${browser.loading ? 'is-loading' : ''}" data-media-browser data-media-browser-id="${escapeHtml(item.id)}">
+  return `<div class="media-browser-widget ${options.modal ? 'media-browser-modal-content' : ''} ${settings.transparentBackground ? 'transparent-background' : ''} layout-${escapeHtml(settings.layoutMode || 'grid')} ${browser.loading ? 'is-loading' : ''}" data-media-browser data-media-browser-id="${escapeHtml(item.id)}">
     <div class="system-widget-heading"><h3>${marquee(settings.title || 'Media')}</h3><span>${entity ? escapeHtml(localName(entity.name)) : 'Configure'}</span></div>
     <div class="media-browser-toolbar"><button type="button" class="media-browser-back" data-action="media-browser-back" data-item-id="${escapeHtml(item.id)}" ${canGoBack ? '' : 'disabled'} title="Back">${materialSymbol('arrow_back', 20)}</button><div class="media-browser-location"><strong>${marquee(currentFolder)}</strong><div class="media-browser-breadcrumbs">${breadcrumbButtons}</div></div>${search}</div>
     <div class="media-browser-content" data-media-layout="${escapeHtml(settings.layoutMode || 'grid')}">${content}${browser.loading && browser.loaded ? `<div class="media-browser-loading-overlay"><span class="media-browser-spinner"></span></div>` : ''}</div>
@@ -7037,7 +7052,7 @@ function renderWidgetSettingsModal() {
     } else if (type === 'conditional') {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || '')}"></div>${entitySelect('conditionEntityId', settings.conditionEntityId, 'Condition entity')}<div class="field"><label>Operator</label><select class="settings-input" name="operator">${[['equals','Equals'],['not_equals','Does not equal'],['contains','Contains'],['greater','Greater than'],['less','Less than'],['truthy','Is active / truthy']].map(([value,label]) => `<option value="${value}" ${settings.operator === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><div class="field"><label>Comparison value</label><input class="settings-input" name="compareValue" value="${escapeHtml(settings.compareValue ?? 'ON')}"></div><div class="field"><label>Message when false</label><input class="settings-input" name="falseText" value="${escapeHtml(settings.falseText || 'Condition not met')}"></div><label class="checkbox-row"><input type="checkbox" name="invert" ${settings.invert ? 'checked' : ''}> Invert result</label><label class="checkbox-row"><input type="checkbox" name="hideWhenFalse" ${settings.hideWhenFalse ? 'checked' : ''}> Collapse completely when false</label><label class="checkbox-row"><input type="checkbox" name="layoutLocked" ${settings.layoutLocked ? 'checked' : ''}> Lock child order and layout</label>${conditionalItemOptions(item)}`;
     } else if (type === 'media_browser') {
-      body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Media')}"></div>${entitySelect('mediaEntityId', settings.mediaEntityId, 'Media player', ['media_player'])}${mediaPresentationEditor(settings)}<div class="field"><label>Default play action</label><select class="settings-input" name="playAction">${[['PLAY_NOW','Play now'],['PLAY_NEXT','Play next'],['ADD_TO_QUEUE','Add to queue']].map(([value,label]) => `<option value="${value}" ${settings.playAction === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><label class="checkbox-row"><input type="checkbox" name="showArtwork" ${settings.showArtwork !== false ? 'checked' : ''}> Show artwork</label><label class="checkbox-row"><input type="checkbox" name="showSubtitle" ${settings.showSubtitle !== false ? 'checked' : ''}> Show subtitle / artist</label><label class="checkbox-row"><input type="checkbox" name="showSearch" ${settings.showSearch !== false ? 'checked' : ''}> Show search when supported</label>`;
+      body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Media')}"></div>${entitySelect('mediaEntityId', settings.mediaEntityId, 'Media player', ['media_player'])}<label class="checkbox-row"><input type="checkbox" name="transparentBackground" ${settings.transparentBackground === true ? 'checked' : ''}> Remove semi-transparent background (widget and media cards)</label>${mediaPresentationEditor(settings)}<div class="field"><label>Default play action</label><select class="settings-input" name="playAction">${[['PLAY_NOW','Play now'],['PLAY_NEXT','Play next'],['ADD_TO_QUEUE','Add to queue']].map(([value,label]) => `<option value="${value}" ${settings.playAction === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div><label class="checkbox-row"><input type="checkbox" name="showArtwork" ${settings.showArtwork !== false ? 'checked' : ''}> Show artwork</label><label class="checkbox-row"><input type="checkbox" name="showSubtitle" ${settings.showSubtitle !== false ? 'checked' : ''}> Show subtitle / artist</label><label class="checkbox-row"><input type="checkbox" name="showSearch" ${settings.showSearch !== false ? 'checked' : ''}> Show search when supported</label>`;
     } else if (type === 'tab_container') {
       body = `<div class="field"><label>Title</label><input class="settings-input" name="title" value="${escapeHtml(settings.title || 'Tabs')}"></div>${tabContainerSettingsFields(item)}`;
     } else if (type === 'carousel') {
