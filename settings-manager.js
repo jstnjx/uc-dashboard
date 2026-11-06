@@ -41,6 +41,7 @@ export class SettingsManager {
       dashboardPort: Number.parseInt(process.env.DASHBOARD_PORT || '11080', 10),
       logLevel: normalizeLogLevel(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL || 'info'),
       unfoldedToolsApiKey: process.env.UNFOLDED_TOOLS_API_KEY || '',
+      openWeatherApiKey: process.env.OPENWEATHERMAP_API_KEY || '',
       unfoldedToolsCacheSelected: boolFromEnv(process.env.UNFOLDED_TOOLS_CACHE_SELECTED, true),
       unfoldedToolsIncludeInBackup: boolFromEnv(process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP, true)
     };
@@ -79,6 +80,7 @@ export class SettingsManager {
       this.settings.chargingGatedConfigured = true;
     }
     if (process.env.UNFOLDED_TOOLS_API_KEY) this.settings.unfoldedToolsApiKey = process.env.UNFOLDED_TOOLS_API_KEY;
+    if (process.env.OPENWEATHERMAP_API_KEY) this.settings.openWeatherApiKey = process.env.OPENWEATHERMAP_API_KEY;
     if (process.env.UNFOLDED_TOOLS_CACHE_SELECTED !== undefined) this.settings.unfoldedToolsCacheSelected = boolFromEnv(process.env.UNFOLDED_TOOLS_CACHE_SELECTED, true);
     if (process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP !== undefined) this.settings.unfoldedToolsIncludeInBackup = boolFromEnv(process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP, true);
     if (process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL) {
@@ -100,6 +102,7 @@ export class SettingsManager {
       logLevel: this.settings.logLevel,
       hasApiKey: Boolean(this.settings.apiKey),
       unfoldedToolsApiKeyConfigured: Boolean(this.settings.unfoldedToolsApiKey),
+      openWeatherApiKeyConfigured: Boolean(this.settings.openWeatherApiKey),
       unfoldedToolsCacheSelected: Boolean(this.settings.unfoldedToolsCacheSelected),
       unfoldedToolsIncludeInBackup: Boolean(this.settings.unfoldedToolsIncludeInBackup),
       remoteHttpUrl: this.settings.remoteHttpUrl,
@@ -145,6 +148,7 @@ export class SettingsManager {
       dashboardPort: this.settings.dashboardPort,
       logLevel: this.settings.logLevel,
       unfoldedToolsApiKeyConfigured: Boolean(this.settings.unfoldedToolsApiKey),
+      openWeatherApiKeyConfigured: Boolean(this.settings.openWeatherApiKey),
       unfoldedToolsCacheSelected: Boolean(this.settings.unfoldedToolsCacheSelected),
       unfoldedToolsIncludeInBackup: Boolean(this.settings.unfoldedToolsIncludeInBackup),
       onRemote: this.onRemote,
@@ -156,6 +160,7 @@ export class SettingsManager {
         chargingGated: process.env.CHARGING_GATED !== undefined,
         logLevel: Boolean(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL),
         unfoldedToolsApiKey: Boolean(process.env.UNFOLDED_TOOLS_API_KEY),
+        openWeatherApiKey: Boolean(process.env.OPENWEATHERMAP_API_KEY),
         unfoldedToolsCacheSelected: process.env.UNFOLDED_TOOLS_CACHE_SELECTED !== undefined,
         unfoldedToolsIncludeInBackup: process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP !== undefined
       }
@@ -196,6 +201,8 @@ export class SettingsManager {
     if (typeof body.unfoldedToolsCacheSelected === 'boolean' && process.env.UNFOLDED_TOOLS_CACHE_SELECTED === undefined) this.settings.unfoldedToolsCacheSelected = body.unfoldedToolsCacheSelected;
     if (typeof body.unfoldedToolsIncludeInBackup === 'boolean' && process.env.UNFOLDED_TOOLS_INCLUDE_IN_BACKUP === undefined) this.settings.unfoldedToolsIncludeInBackup = body.unfoldedToolsIncludeInBackup;
     if (body.clearUnfoldedToolsApiKey === true && !process.env.UNFOLDED_TOOLS_API_KEY) this.settings.unfoldedToolsApiKey = '';
+    if (body.clearOpenWeatherApiKey === true && !process.env.OPENWEATHERMAP_API_KEY) this.settings.openWeatherApiKey = '';
+    if (typeof body.openWeatherApiKey === 'string' && body.openWeatherApiKey.trim() && !process.env.OPENWEATHERMAP_API_KEY) this.settings.openWeatherApiKey = body.openWeatherApiKey.trim();
     if (typeof body.unfoldedToolsApiKey === 'string' && body.unfoldedToolsApiKey.trim() && !process.env.UNFOLDED_TOOLS_API_KEY) this.settings.unfoldedToolsApiKey = body.unfoldedToolsApiKey.trim();
     if (body.logLevel !== undefined && !(process.env.UC_DASHBOARD_LOG_LEVEL || process.env.LOG_LEVEL)) {
       this.settings.logLevel = normalizeLogLevel(body.logLevel);
@@ -213,6 +220,7 @@ export class SettingsManager {
       dashboardPort: this.settings.dashboardPort,
       logLevel: this.settings.logLevel,
       unfoldedToolsApiKeyConfigured: Boolean(this.settings.unfoldedToolsApiKey),
+      openWeatherApiKeyConfigured: Boolean(this.settings.openWeatherApiKey),
       unfoldedToolsCacheSelected: Boolean(this.settings.unfoldedToolsCacheSelected),
       unfoldedToolsIncludeInBackup: Boolean(this.settings.unfoldedToolsIncludeInBackup)
     });
