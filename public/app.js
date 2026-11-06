@@ -6784,7 +6784,7 @@ function returnUnselectedContainerItems(dashboard, containerItem, previousItems,
   dashboard.items = dashboard.items.filter((candidate) => candidate.id === containerItem.id || !selectedIds.has(candidate.id));
   for (const candidate of returned) {
     if (dashboard.items.some((entry) => entry.id === candidate.id)) continue;
-    const slot = findSlot(dashboard.items, candidate.w || 4, candidate.h || 2, 12);
+    const slot = findSlot(dashboard.items, candidate.w || 4, candidate.h || 2, DASHBOARD_GRID_COLUMNS);
     Object.assign(candidate, { x: slot.x, y: slot.y });
     dashboard.items.push(candidate);
   }
@@ -6846,7 +6846,10 @@ function updateGenericContainerFromForm(dashboard, item, data) {
     nextItems.sort((a,b)=>(orderIndex.get(a.id) ?? 9999) - (orderIndex.get(b.id) ?? 9999));
   }
   returnUnselectedContainerItems(dashboard, item, previous, nextItems);
-  for (const child of nextItems) { child.settings ||= {}; child.settings.containerLayout = normalizeChildLayout({ width:data.get(`childWidth:${child.id}`), height:data.get(`childHeight:${child.id}`), align:data.get(`childAlign:${child.id}`) }); }
+  for (const child of nextItems) {
+    child.settings ||= {};
+    if (data.has(`childWidth:${child.id}`)) child.settings.containerLayout = normalizeChildLayout({ width:data.get(`childWidth:${child.id}`), height:data.get(`childHeight:${child.id}`), align:data.get(`childAlign:${child.id}`) });
+  }
   if (item.widgetType === 'conditional') applyConditionalChildrenFromForm(nextItems, data, item.settings);
   return nextItems;
 }
