@@ -88,6 +88,21 @@ Supported Core entity types:
 
 Additional widgets include cameras, clocks, weather, room summaries, history graphs, alerts, text, gauges, scenes and routines, entity tables, counters, statistics, timers, templates, custom code, connection status, Remote power, dividers, and spacers.
 
+### Media widget customization
+
+**Media browser:** Open a Media browser widget's **Content** settings and enable **Remove semi-transparent background (widget and media cards)** for a transparent media browser. The option removes the widget background and the translucent backgrounds behind thumbnails, media cards, the search field and browser controls. Borders and artwork remain available. Existing widgets keep their current backgrounds unless enabled.
+
+**Media player:** Open a media-player entity widget's **Content → Media player data sources** section to configure each role independently:
+
+- **Title, artist and playback state** – read media metadata from a selected media player entity.
+- **Artwork** – read album artwork from a different media player.
+- **Playback controls** – send previous, play/pause and next commands to the chosen media player.
+- **Volume controls** – send volume and mute commands to the selected media player.
+- **Playback progress** – display time and duration from another media player.
+- **Artwork shape** – use the original fill presentation or a square (1:1) image.
+
+The default for each role is **Widget media player**, keeping all existing widgets compatible. Live source changes update the widget without modifying its position or size. Sources must be `media_player` entities exposed by the Remote. The widget's existing visibility conditions, element toggles, appearance, and media browser modal remain supported.
+
 ### Kiosk and screensaver
 
 - Full-screen kiosk mode
