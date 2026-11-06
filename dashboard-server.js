@@ -81,17 +81,19 @@ function normalizeOpenWeatherData(current, forecast, options) {
     const day = new Date((entry.timestamp + timezone) * 1000).toISOString().slice(0, 10);
     const hour = new Date((entry.timestamp + timezone) * 1000).getUTCHours();
     const previous = days.get(day);
+    const probability = Math.max(previous?.precipitationProbability || 0, entry.precipitationProbability);
     if (!previous || Math.abs(hour - 12) < previous.distance) {
-      days.set(day, { ...entry, day, distance: Math.abs(hour - 12) });
+      days.set(day, { ...entry, day, distance: Math.abs(hour - 12), precipitationProbability: probability });
+    } else {
+      previous.precipitationProbability = probability;
     }
-    const selected = days.get(day);
-    selected.precipitationProbability = Math.max(selected.precipitationProbability, entry.precipitationProbability);
   }
   const daily = [...days.values()].map(({ distance, ...entry }) => entry);
   const weather = current.weather?.[0] || {};
   return {
     location: [current.name, current.sys?.country].filter(Boolean).join(', '),
     units: options.units,
+    timezone,
     refreshedAt: new Date().toISOString(),
     current: {
       temperature: Number.isFinite(Number(current.main?.temp)) ? Number(current.main.temp) : null,
