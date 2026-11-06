@@ -16,6 +16,100 @@ const UNFOLDED_TOOLS_CATEGORIES = new Set(['apps', 'tv-apps', 'community', 'tv-l
 const ICON_CACHE_MAX_BYTES = 4 * 1024 * 1024;
 const ICON_METADATA_TTL_MS = 6 * 60 * 60 * 1000;
 
+const OPENWEATHER_BASE = 'https://api.openweathermap.org';
+const OPENWEATHER_CACHE_MS = 10 * 60 * 1000;
+
+// Keep the OpenWeatherMap key on the integration server. Never add it to
+// dashboard configuration, public settings, API responses, or client-side URLs.
+async function openWeatherRequest(endpoint, params, apiKey) {
+  const url = new URL(endpoint, OPENWEATHER_BASE);
+  for (const [name, value] of Object.entries(params)) url.searchParams.set(name, String(value));
+  url.searchParams.set('appid', apiKey);
+  let response;
+  try {
+    response = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(12000) });
+  } catch {
+    throw Object.assign(new Error('OpenWeatherMap is unreachable'), { statusCode: 502 });
+  }
+  if (!response.ok) {
+    const statusCode = response.status === 401 ? 401 : response.status === 404 ? 404 : response.status === 429 ? 429 : 502;
+    const message = response.status === 401 ? 'OpenWeatherMap API key rejected'
+      : response.status === 429 ? 'OpenWeatherMap API rate limit exceeded'
+        : response.status === 404 ? 'OpenWeatherMap location not found'
+          : 'OpenWeatherMap request failed';
+    throw Object.assign(new Error(message), { statusCode });
+  }
+  try { return await response.json(); }
+  catch { throw Object.assign(new Error('Invalid OpenWeatherMap response'), { statusCode: 502 }); }
+}
+
+function openWeatherParameters(searchParams) {
+  const location = String(searchParams.get('location') || '').trim().slice(0, 100);
+  const rawLat = searchParams.get('lat');
+  const rawLon = searchParams.get('lon');
+  const coordsSupplied = rawLat !== null && rawLat !== '' || rawLon !== null && rawLon !== '';
+  let lat = null, lon = null;
+  if (coordsSupplied) {
+    lat = Number(rawLat);
+    lon = Number(rawLon);
+    if (rawLat === null || rawLat === '' || rawLon === null || rawLon === '' ||
+      !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      throw Object.assign(new Error('Valid latitude and longitude are required'), { statusCode: 400 });
+    }
+  } else if (!location) {
+    throw Object.assign(new Error('Enter a city or latitude and longitude'), { statusCode: 400 });
+  }
+  const rawUnits = String(searchParams.get('units') || 'metric');
+  const units = ['metric', 'imperial', 'standard'].includes(rawUnits) ? rawUnits : 'metric';
+  const rawLanguage = String(searchParams.get('lang') || 'en').toLowerCase();
+  const lang = /^[a-z]{2}$/.test(rawLanguage) ? rawLanguage : 'en';
+  return { location, lat, lon, units, lang };
+}
+
+function normalizeOpenWeatherData(current, forecast, options) {
+  const timezone = Number(current.timezone || forecast?.city?.timezone) || 0;
+  const hourly = Array.isArray(forecast?.list) ? forecast.list.map((entry) => ({
+    timestamp: Number(entry.dt) || 0,
+    temperature: Number(entry.main?.temp),
+    condition: String(entry.weather?.[0]?.description || ''),
+    weatherId: Number(entry.weather?.[0]?.id) || 800,
+    icon: String(entry.weather?.[0]?.icon || ''),
+    precipitationProbability: Math.round(Math.max(0, Math.min(1, Number(entry.pop) || 0)) * 100)
+  })).filter((entry) => entry.timestamp && Number.isFinite(entry.temperature)) : [];
+  const days = new Map();
+  for (const entry of hourly) {
+    const day = new Date((entry.timestamp + timezone) * 1000).toISOString().slice(0, 10);
+    const hour = new Date((entry.timestamp + timezone) * 1000).getUTCHours();
+    const previous = days.get(day);
+    if (!previous || Math.abs(hour - 12) < previous.distance) {
+      days.set(day, { ...entry, day, distance: Math.abs(hour - 12) });
+    }
+    const selected = days.get(day);
+    selected.precipitationProbability = Math.max(selected.precipitationProbability, entry.precipitationProbability);
+  }
+  const daily = [...days.values()].map(({ distance, ...entry }) => entry);
+  const weather = current.weather?.[0] || {};
+  return {
+    location: [current.name, current.sys?.country].filter(Boolean).join(', '),
+    units: options.units,
+    refreshedAt: new Date().toISOString(),
+    current: {
+      temperature: Number.isFinite(Number(current.main?.temp)) ? Number(current.main.temp) : null,
+      condition: String(weather.description || weather.main || ''),
+      weatherId: Number(weather.id) || 800,
+      icon: String(weather.icon || ''),
+      humidity: Number.isFinite(Number(current.main?.humidity)) ? Number(current.main.humidity) : null,
+      windSpeed: Number.isFinite(Number(current.wind?.speed)) ? Number(current.wind.speed) : null,
+      precipitation: Number(current.rain?.['1h'] ?? current.snow?.['1h'] ?? 0) || 0,
+      sunrise: Number(current.sys?.sunrise) || null,
+      sunset: Number(current.sys?.sunset) || null
+    },
+    hourly,
+    daily
+  };
+}
+
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -197,6 +291,7 @@ function dashboardRequestPayload(pathname, body) {
     return {
       ...body,
       ...(Object.prototype.hasOwnProperty.call(body, 'unfoldedToolsApiKey') ? { unfoldedToolsApiKey: '[redacted]' } : {}),
+      ...(Object.prototype.hasOwnProperty.call(body, 'openWeatherApiKey') ? { openWeatherApiKey: '[redacted]' } : {}),
       ...(Object.prototype.hasOwnProperty.call(body, 'apiKey') ? { apiKey: '[redacted]' } : {})
     };
   }
@@ -222,6 +317,8 @@ export class DashboardServer {
     this.mediaInflight = new Map();
     this.mediaCache = new Map();
     this.unfoldedToolsMetadataCache = new Map();
+    this.openWeatherCache = new Map();
+    this.openWeatherInflight = new Map();
 
     coreClient.on('runtime', () => this.broadcast('runtime', this.runtimeProvider()));
     coreClient.on('entities', () => { this.broadcast('entities', this.entities()); this.broadcast('entity_catalog', this.entityCatalog()); });
@@ -381,6 +478,10 @@ export class DashboardServer {
       }
       if (pathname === '/api/runtime' && req.method === 'GET') {
         sendJson(res, 200, this.runtimeProvider());
+        return;
+      }
+      if (pathname === '/api/weather/openweathermap' && req.method === 'GET') {
+        sendJson(res, 200, await this.#openWeatherData(requestUrl.searchParams));
         return;
       }
       if (pathname === '/api/entities' && req.method === 'GET') {
@@ -636,8 +737,10 @@ export class DashboardServer {
         log.debug('Dashboard API request payload', { direction: 'dashboard_to_integration', requestId, pathname, payload: dashboardRequestPayload(pathname, body) });
         log.info('Dashboard settings update requested', { requestId, fields: Object.keys(body || {}) });
         const previousUnfoldedToolsKey = String(this.settingsManager.get().unfoldedToolsApiKey || '');
+        const previousOpenWeatherKey = String(this.settingsManager.get().openWeatherApiKey || '');
         const result = await this.settingsManager.update(body);
         if (previousUnfoldedToolsKey !== String(this.settingsManager.get().unfoldedToolsApiKey || '')) this.unfoldedToolsMetadataCache.clear();
+        if (previousOpenWeatherKey !== String(this.settingsManager.get().openWeatherApiKey || '')) this.openWeatherCache.clear();
         sendJson(res, 200, { ok: true, settings: this.settingsManager.forUi() });
         setImmediate(() => this.onSettingsChanged(result));
         return;
@@ -674,6 +777,41 @@ export class DashboardServer {
     }
   }
 
+
+
+  async #openWeatherData(searchParams) {
+    const apiKey = String(this.settingsManager.get().openWeatherApiKey || '').trim();
+    if (!apiKey) throw Object.assign(new Error('Configure your OpenWeatherMap API key in Settings → Weather'), { statusCode: 401 });
+    const options = openWeatherParameters(searchParams);
+    const key = JSON.stringify([options, createHash('sha256').update(apiKey).digest('hex')]);
+    const cached = this.openWeatherCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
+    if (this.openWeatherInflight.has(key)) return this.openWeatherInflight.get(key);
+    const operation = (async () => {
+      let { lat, lon } = options;
+      if (lat === null || lon === null) {
+        const geocoded = await openWeatherRequest('/geo/1.0/direct', { q: options.location, limit: 1 }, apiKey);
+        if (!Array.isArray(geocoded) || !geocoded.length) {
+          throw Object.assign(new Error('OpenWeatherMap location not found'), { statusCode: 404 });
+        }
+        lat = Number(geocoded[0].lat);
+        lon = Number(geocoded[0].lon);
+      }
+      const params = { lat, lon, units: options.units, lang: options.lang };
+      const current = await openWeatherRequest('/data/2.5/weather', params, apiKey);
+      // Forecast failures do not suppress current conditions.
+      let forecast = null;
+      try { forecast = await openWeatherRequest('/data/2.5/forecast', params, apiKey); }
+      catch (error) { log.warn('OpenWeatherMap forecast unavailable', { statusCode: error.statusCode || 502 }); }
+      const data = normalizeOpenWeatherData(current, forecast, options);
+      if (this.openWeatherCache.size >= 100) this.openWeatherCache.clear();
+      this.openWeatherCache.set(key, { data, expiresAt: Date.now() + OPENWEATHER_CACHE_MS });
+      return data;
+    })();
+    this.openWeatherInflight.set(key, operation);
+    try { return await operation; }
+    finally { this.openWeatherInflight.delete(key); }
+  }
 
   async #unfoldedToolsFetchJson(endpoint, apiKey = '') {
     const key = String(apiKey || this.settingsManager.get().unfoldedToolsApiKey || '').trim();
