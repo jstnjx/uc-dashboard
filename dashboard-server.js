@@ -39,7 +39,7 @@ const DEFAULT_CONFIG = {
   widgetMasters: [],
   backgroundPresets: [],
   iconAssets: {},
-  ui: { localization: { enabled: false, language: 'en', customDictionaries: {} }, entities: { mode: 'all', includedIds: [] }, notifications: { autoLowBattery: true, batteryThreshold: 20, autoUnavailable: true, autoUpdates: true, acknowledgeMinutes: 60, dismissHours: 24, maxStatusAlerts: 100 }, screensaver: { enabled: false, timeoutSeconds: 300, mode: 'clock', title: '', image: '', background: '#000000', foreground: '#ffffff', overlay: 25, showDate: true, showBattery: true, showConnection: false, movement: true, movementDuration: 180, contentScale: 100, clockSize: 100, showWakeHint: true, imageFit: 'cover', lockEnabled: false, lockPinHash: '', lockPinHint: '', triggers: [] }, kiosk: { scaleToFit: false, allowUpscale: false, padding: 0, widthMode: 'fill' }, navigation: { mode: 'default', showIcons: true, showLabels: true, cardWidth: 152, transition: 'slide' }, statusBar: { visible: true, layoutColumns: 7, layoutItems: [{ id: 'status-time', type: 'time' }, { id: 'status-page', type: 'page' }, { id: 'status-connection', type: 'connection_dot' }, { id: 'status-charging', type: 'charging_indicator' }, { id: 'status-wifi', type: 'wifi' }, { id: 'status-alerts', type: 'alerts' }, { id: 'status-profile', type: 'profile' }], showSeconds: false, hour12: false, profileText: 'W', alignment: 'distributed', background: '#000000', backgroundOpacity: 98, foreground: '#d0d0d0', height: 40, sticky: true, blur: 0, borderWidth: 0, borderColor: '#252525', radius: 0, shadow: false } },
+  ui: { localization: { enabled: false, language: 'en', customDictionaries: {} }, entities: { mode: 'all', includedIds: [] }, notifications: { autoLowBattery: true, batteryThreshold: 20, autoUnavailable: true, autoUpdates: true, acknowledgeMinutes: 60, dismissHours: 24, maxStatusAlerts: 100 }, screensaver: { enabled: false, timeoutSeconds: 300, mode: 'clock', title: '', image: '', background: '#000000', foreground: '#ffffff', overlay: 25, showDate: true, showBattery: true, showConnection: false, movement: true, movementDuration: 180, contentScale: 100, clockSize: 100, showWakeHint: true, imageFit: 'cover', lockEnabled: false, lockPinHash: '', lockPinHint: '', triggers: [] }, kiosk: { scaleToFit: false, allowUpscale: false, padding: 0, widthMode: 'fill' }, navigation: { mode: 'default', showIcons: true, showLabels: true, cardWidth: 152, transition: 'slide' }, statusBar: { visible: true, layoutColumns: 7, layoutItems: [{ id: 'status-time', type: 'time' }, { id: 'status-page', type: 'page' }, { id: 'status-connection', type: 'connection_dot' }, { id: 'status-charging', type: 'charging_indicator' }, { id: 'status-battery', type: 'battery_indicator' }, { id: 'status-alerts', type: 'alerts' }, { id: 'status-profile', type: 'profile' }], showSeconds: false, hour12: false, profileText: 'W', alignment: 'distributed', background: '#000000', backgroundOpacity: 98, foreground: '#d0d0d0', height: 40, sticky: true, blur: 0, borderWidth: 0, borderColor: '#252525', radius: 0, shadow: false } },
   dashboards: [{ id: 'main', name: 'Living Room', navIcon: 'living', navColor: '#d0d0d0', background: { preset: 'black', color: '#000000', image: '', overlay: 0, fit: 'cover', position: 'center center', fixed: true }, items: [] }]
 };
 
@@ -1064,10 +1064,17 @@ export class DashboardServer {
   }
 
   async #serveStatic(pathname, res, headOnly) {
-    let normalizedPath = pathname === '/' ? '/index.html' : decodeURIComponent(pathname);
+    let normalizedPath;
+    try {
+      normalizedPath = pathname === '/' ? '/index.html' : decodeURIComponent(pathname);
+    } catch {
+      sendJson(res, 400, { error: 'Malformed URL' });
+      return;
+    }
     const safeRelative = path.normalize(normalizedPath).replace(/^([/\\])+/, '');
     const filePath = path.join(this.publicDir, safeRelative);
-    if (!filePath.startsWith(this.publicDir)) {
+    const publicRoot = path.resolve(this.publicDir);
+    if (filePath !== publicRoot && !filePath.startsWith(publicRoot + path.sep)) {
       sendJson(res, 403, { error: 'Forbidden' });
       return;
     }

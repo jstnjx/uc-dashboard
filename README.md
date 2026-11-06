@@ -144,20 +144,18 @@ http://REMOTE_IP:11080/?kiosk&p=main
 
 ### Build from source
 
-Node.js 22 is recommended.
+Node.js 22 is recommended. The project has no runtime dependencies, so there is nothing to install; the frontend bundle is built with esbuild through `npx`.
 
 ```bash
-npm ci
 npm run check
-npm run build:frontend
-npm run build:integration
+npm run build:integration   # also runs build:frontend
 ```
 
-Generated release files:
+Generated release files (the version comes from `driver.json`):
 
 ```text
-builds/uc-dashboard-1.11.0.tar.gz
-builds/uc-dashboard-1.11.0.tar.gz.sha256
+builds/uc-dashboard-<version>.tar.gz
+builds/uc-dashboard-<version>.tar.gz.sha256
 ```
 
 ## Docker deployment

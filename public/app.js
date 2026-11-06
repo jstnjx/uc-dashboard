@@ -1510,6 +1510,14 @@ function normalizeStatusBarLayout(settings = {}) {
   const layoutColumns = Math.max(1, Math.min(24, requestedColumns));
   const retainedItemCount = Math.max(layoutColumns, Math.min(24, sourceItems.length));
   const layoutItems = sourceItems.slice(0, 24).map(normalizeStatusBarItem);
+  // Older default layouts shipped both a "connection_dot" and a legacy "wifi"
+  // cell. Both resolve to the same connection status, which rendered
+  // "connected" twice. Keep the first one and blank the legacy Wi-Fi duplicate.
+  layoutItems.forEach((item, index) => {
+    const source = sourceItems[index] || {};
+    if (item.type !== 'connection' || !(source.type === 'wifi' || item.id === 'status-wifi')) return;
+    if (layoutItems.some((other, otherIndex) => otherIndex !== index && other.type === 'connection')) layoutItems[index] = normalizeStatusBarItem({ id:item.id, type:'empty' }, index);
+  });
   while (layoutItems.length < retainedItemCount) layoutItems.push(normalizeStatusBarItem({ type:'empty' }, layoutItems.length));
   return { layoutColumns, layoutItems };
 }
@@ -2223,13 +2231,19 @@ async function publishEditorChanges() {
   render();
 }
 
-function toast(message, type = '') {
+function toast(message, type = '', options = {}) {
   if (state.kioskMode && type !== 'error') return;
+  if (options.key) dismissToast(options.key);
   const node = document.createElement('div');
   node.className = `toast ${type}`;
+  if (options.key) node.dataset.toastKey = options.key;
   node.textContent = translateDashboardText(message);
   toastRegion.append(node);
   setTimeout(() => node.remove(), 3300);
+}
+
+function dismissToast(key) {
+  toastRegion.querySelectorAll('[data-toast-key]').forEach((node) => { if (node.dataset.toastKey === key) node.remove(); });
 }
 
 function materialSymbol(name, size = 22, className = '') {
@@ -2859,10 +2873,11 @@ function beginWidgetPlacement(item, label) {
   state.drawerOpen = false;
   state.modal = null;
   render({ preserveModal:false });
-  toast('Choose a grid field to place the widget');
+  toast('Choose a grid field to place the widget', '', { key:'widget-placement' });
 }
 
 function cancelWidgetPlacement() {
+  dismissToast('widget-placement');
   state.pendingWidgetPlacement = null;
   state.placementHover = null;
   render();
@@ -2882,6 +2897,7 @@ function commitWidgetPlacement(candidate) {
   state.modal = { type:'widget-settings', itemId, isNew:true };
   persistConfig();
   render({ preserveModal:false });
+  dismissToast('widget-placement');
   toast(`${label} placed`);
 }
 
@@ -3080,13 +3096,18 @@ const WIDGET_LAYOUT_ELEMENTS = {
     ['related','Related entities',':is(.activity-related-entities,.activity-entity-actions)'],
     ['controls','Start / stop controls',':is(.activity-launch-button,.activity-controls)',{ positionOnly:true }]
   ],
+  // Selectors must match renderMediaPlayer(): the copy block is
+  // small.media-entity-name / h3 / p, and the volume slider lives inside .media-controls.
+  // (The previous selectors matched every marquee <span> as "Artist / source", never
+  // matched the media title or the volume slider, and transformed the artwork twice.)
   media_player: [
-    ['artwork','Artwork',':is(.media-visual,.media-artwork,.media-fallback)'],
-    ['title','Media title',':is(.media-copy strong,.media-entity-name)'],
-    ['subtitle','Artist / source','.media-copy span'],
+    ['artwork','Artwork',':is(.media-visual,.media-artwork)'],
+    ['name','Entity name','.media-copy .media-entity-name'],
+    ['title','Media title','.media-copy h3'],
+    ['subtitle','Artist / state','.media-copy p'],
     ['progress','Progress','.media-progress'],
     ['playback','Playback controls','.media-buttons',{ positionOnly:true }],
-    ['volume','Volume','.media-widget > .remote-slider']
+    ['volume','Volume',':is(.media-widget > .remote-slider,.media-controls > .remote-slider)']
   ],
   sensor: [['lead','Icon and labels','.entity-lead'],['value','Value','.remote-value']],
   select: [['lead','Icon and labels','.entity-lead'],['control','Selection control','.remote-select']],
@@ -3096,17 +3117,17 @@ const WIDGET_LAYOUT_ELEMENTS = {
   cover: [['lead','Icon and labels','.entity-lead'],['buttons','Open / stop / close','.remote-button-group',{ positionOnly:true }],['position','Position slider','.remote-slider']],
   activity_launcher: [['heading','Heading','.system-widget-heading'],['activities','Activity grid','.activity-launch-grid'],['activeMedia','Active media panel','.activity-running-media'],['artwork','Media artwork','.activity-media-artwork'],['mediaControls','Media controls','.activity-media-buttons'],['volume','Media volume','.activity-media-volume'],['toggle','Start / stop button','.activity-primary-toggle']],
   camera: [['camera','Camera feed','.camera-frame'],['title','Camera title','.camera-heading']],
-  conditional: [['heading','Heading','.system-widget-heading'],['content','Conditional content','.conditional-grid']],
+  conditional: [['content','Conditional content',':is(.conditional-grid,.conditional-message)']],
   divider_horizontal: [['divider','Divider line','.divider-widget span']],
   divider_vertical: [['divider','Divider line','.divider-widget span']],
   text: [['title','Heading','.system-text h3'],['titleDivider','Heading divider','.system-text h3 + .text-widget-divider'],['body','Body','.system-text p'],['bodyDivider','Body divider','.system-text p + .text-widget-divider']],
-  connection: [['icon','Connection icon','.system-status-icon'],['title','Title','.system-status small'],['value','Connection state','.system-status strong'],['details','Message and entity count',':is(.system-status span,.system-status b)']],
-  power: [['icon','Power icon','.system-status-icon'],['title','Title','.system-status small'],['value','Battery / power state','.system-status strong'],['details','Power details','.system-status span']],
+  connection: [['icon','Connection icon','.system-status-icon'],['title','Title','.system-status small'],['value','Connection state','.system-status strong'],['details','Message and entity count',':is(.system-status > div > span,.system-status > div > b)']],
+  power: [['icon','Power icon','.system-status-icon'],['title','Title','.system-status small'],['value','Battery / power state','.system-status strong'],['details','Power details','.system-status > div > span']],
   clock: [['title','Optional title','.clock-title'],['value','Time','.clock-time'],['subtitle','Date','.clock-date']],
-  weather: [['current','Current conditions','.weather-current'],['title','Title','.weather-copy small'],['value','Temperature','.weather-copy strong'],['condition','Condition','.weather-copy span'],['icon','Weather icon','.weather-icon'],['metadata','Weather details','.weather-meta'],['forecast','Forecast','.weather-forecast']],
+  weather: [['current','Current conditions','.weather-current'],['title','Title','.weather-copy small'],['value','Temperature','.weather-copy strong'],['condition','Condition','.weather-copy > span'],['icon','Weather icon','.weather-icon'],['metadata','Weather details','.weather-meta'],['forecast','Forecast','.weather-forecast']],
   icon_button: [['icon','Button icon','.command-button-icon']],
-  text_button: [['title','Button label','.command-button-copy strong'],['subtitle','Subtitle','.command-button-copy span']],
-  icon_text_button: [['icon','Button icon','.command-button-icon'],['title','Button label','.command-button-copy strong'],['subtitle','Subtitle','.command-button-copy span']],
+  text_button: [['title','Button label','.command-button-copy > strong'],['subtitle','Subtitle','.command-button-copy > small']],
+  icon_text_button: [['icon','Button icon','.command-button-icon'],['title','Button label','.command-button-copy > strong'],['subtitle','Subtitle','.command-button-copy > small']],
   media_browser: [['heading','Heading','.system-widget-heading'],['toolbar','Browser toolbar','.media-browser-toolbar'],['location','Location and breadcrumbs','.media-browser-location'],['search','Search','.media-browser-search'],['browser','Browser content','.media-browser-content'],['items','Media cards',':is(.media-browser-grid,.media-browser-list,.media-browser-swiper-shell)'],['pagination','Pagination','.media-browser-pagination']],
   tab_container: [['heading','Heading','.system-widget-heading'],['tabs','Tabs','.tab-container-tabs'],['content','Tab content','.tab-container-panel']],
   carousel: [['heading','Heading','.system-widget-heading'],['slides','Slides','.carousel-stage'],['counter','Slide counter','[data-carousel-counter]']],
@@ -5807,11 +5828,11 @@ function statusbarLayoutItemsFromForm(form) {
 function statusbarPreviewItem(item, settings = {}) {
   if (item.type === 'empty') return '';
   if (item.type === 'divider') return '<i class="preview-column-divider"></i>';
-  if (item.type === 'time') return '12:34';
-  if (item.type === 'date') return '15 Jul 2026';
-  if (item.type === 'page') return escapeHtml(currentDashboard()?.name || 'Dashboard');
-  if (item.type === 'custom') return escapeHtml(item.customText || 'Custom');
-  if (item.type === 'entity') return 'Living Room · 22.5 °C';
+  if (item.type === 'time') return '<span>12:34</span>';
+  if (item.type === 'date') return '<span>15 Jul 2026</span>';
+  if (item.type === 'page') return `<span>${escapeHtml(currentDashboard()?.name || 'Dashboard')}</span>`;
+  if (item.type === 'custom') return `<span>${escapeHtml(item.customText || 'Custom')}</span>`;
+  if (item.type === 'entity') return '<span>Living Room · 22.5 °C</span>';
   if (item.type === 'battery') return `${materialSymbol('battery_full',16)}<span>74%</span>`;
   if (item.type === 'connection') return `${materialSymbol('wifi',16)}<span>Connected</span>`;
   if (item.type === 'entity_count') return `${materialSymbol('dataset',16)}<span>${state.entities.size}</span>`;
@@ -6675,6 +6696,14 @@ function widgetActionEditor(slot,label,action) {
   const a=normalizeWidgetAction(action); const commands=allCommandActions(); const widgets=allDashboardItems().filter((entry)=>entry.id!==state.modal?.itemId);
   return `<details class="action-editor" ${a.type!=='none'?'open':''}><summary>${escapeHtml(label)}<span>${escapeHtml(a.type.replaceAll('_',' '))}</span></summary><div class="field"><label>Action</label><select class="settings-input" name="actionType:${slot}">${actionTypeOptions(a.type)}</select></div><div class="field"><label>Dashboard</label><select class="settings-input" name="actionDashboard:${slot}"><option value="">Select dashboard</option>${state.config.dashboards.map((d)=>`<option value="${escapeHtml(d.id)}" ${a.dashboardId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}</select></div><div class="field"><label>Entity command</label><select class="settings-input" name="actionCommand:${slot}"><option value="">Select command</option>${commands.map((command)=>{const value=encodeCommandAction(command);return `<option value="${escapeHtml(value)}" ${a.commandAction===value?'selected':''}>${escapeHtml(command.label)}</option>`}).join('')}</select></div>${entitySelect(`actionEntity:${slot}`,a.entityId,'Entity')}<div class="field"><label>Modal widget</label><select class="settings-input" name="actionWidget:${slot}"><option value="">Select widget</option>${widgets.map((entry)=>`<option value="${escapeHtml(entry.id)}" ${a.widgetId===entry.id?'selected':''}>${escapeHtml(widgetEditorLabel(entry))}</option>`).join('')}</select></div><div class="field-row"><div class="field"><label>Confirmation</label><select class="settings-input" name="actionConfirm:${slot}"><option value="none" ${a.confirmMode==='none'?'selected':''}>None</option><option value="dialog" ${a.confirmMode==='dialog'?'selected':''}>Dialog</option><option value="hold" ${a.confirmMode==='hold'?'selected':''}>Hold to confirm</option></select></div><div class="field"><label>Hold duration</label><input class="settings-input" type="number" min="0.4" max="5" step="0.1" name="actionHold:${slot}" value="${a.holdSeconds}"></div></div><div class="field"><label>Confirmation text</label><input class="settings-input" name="actionConfirmText:${slot}" value="${escapeHtml(a.confirmText)}"></div></details>`;
 }
+// Preset / linked-component prompts temporarily replace the widget editor. Remember
+// the editor (and its current step) so Cancel or Save returns to it instead of
+// closing every dialog.
+function widgetEditorReturnModal(node) {
+  const form = node?.closest?.('[data-widget-settings-form]');
+  if (!form || state.modal?.type !== 'widget-settings') return null;
+  return { ...state.modal, step: form.dataset.editorStep || 'content' };
+}
 function widgetEditorLabel(item) { const entity=item.kind==='entity'?entityForItem(item):null; return item.kind==='system'?(SYSTEM_WIDGETS[item.widgetType]?.label||item.widgetType):localName(entity?.name||item.snapshot?.name||item.entityId); }
 function widgetActionsFromForm(data) { const result={}; for(const slot of ['tap','double','hold']) result[slot]=normalizeWidgetAction({type:data.get(`actionType:${slot}`),dashboardId:data.get(`actionDashboard:${slot}`),commandAction:data.get(`actionCommand:${slot}`),entityId:data.get(`actionEntity:${slot}`),widgetId:data.get(`actionWidget:${slot}`),confirmMode:data.get(`actionConfirm:${slot}`),confirmText:data.get(`actionConfirmText:${slot}`),holdSeconds:data.get(`actionHold:${slot}`)}); return result; }
 function conditionEditorRow(rule,index) { const r=normalizeConditionRule(rule); return `<article class="condition-editor-row" data-condition-row data-condition-id="${escapeHtml(r.id)}"><div class="condition-row-head"><strong>Condition ${index+1}</strong><button type="button" class="danger" data-action="remove-condition-row">${materialSymbol('delete',17)}</button></div><div class="field-row"><div class="field"><label>Type</label><select class="settings-input" name="conditionType:${r.id}">${[['entity_state','Entity state'],['numeric','Numeric value'],['time','Time range'],['day','Day of week'],['screen','Screen / orientation'],['dashboard','Active dashboard']].map(([v,l])=>`<option value="${v}" ${r.type===v?'selected':''}>${l}</option>`).join('')}</select></div>${entitySelect(`conditionEntity:${r.id}`,r.entityId,'Entity')}</div><div class="field-row"><div class="field"><label>Attribute</label><input class="settings-input" name="conditionAttribute:${r.id}" value="${escapeHtml(r.attribute)}"></div><div class="field"><label>Operator</label><select class="settings-input" name="conditionOperator:${r.id}">${conditionOperatorOptions(r.operator)}</select></div></div><div class="field-row"><div class="field"><label>Value / start / min width</label><input class="settings-input" name="conditionValue:${r.id}" value="${escapeHtml(r.value)}"></div><div class="field"><label>End / max width</label><input class="settings-input" name="conditionValue2:${r.id}" value="${escapeHtml(r.value2)}"></div></div><div class="field"><label>Orientation</label><select class="settings-input" name="conditionOrientation:${r.id}"><option value="landscape" ${r.orientation==='landscape'?'selected':''}>Landscape</option><option value="portrait" ${r.orientation==='portrait'?'selected':''}>Portrait</option></select></div><div class="field"><label>Dashboard</label><select class="settings-input" name="conditionDashboard:${r.id}"><option value="">Select dashboard</option>${state.config.dashboards.map((d)=>`<option value="${escapeHtml(d.id)}" ${r.dashboardId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}</select></div><div class="weekday-grid">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day,i)=>`<label><input type="checkbox" name="conditionDay:${r.id}" value="${i}" ${r.days.includes(i)?'checked':''}><span>${day}</span></label>`).join('')}</div></article>`; }
@@ -6688,7 +6717,7 @@ function alertRulesFromForm(data,form){return [...form.querySelectorAll('[data-a
 function responsiveEditor(item){const responsive=normalizeResponsiveSettings(item.settings?.responsive);return `<section class="settings-section responsive-widget-editor"><h3>Responsive variants</h3><p class="muted">Override size or presentation only where needed. Empty dimensions keep the dashboard layout.</p>${RESPONSIVE_KEYS.map((key)=>{const value=responsive[key];const label={phone:'Phone',tabletPortrait:'Tablet portrait',tabletLandscape:'Tablet landscape',desktop:'Desktop'}[key];return `<article><label class="checkbox-row"><input type="checkbox" name="responsiveEnabled:${key}" ${value.enabled?'checked':''}> <strong>${label}</strong></label><div class="field-row"><div class="field"><label>Width</label><input class="settings-input" type="number" min="1" max="24" name="responsiveW:${key}" value="${escapeHtml(value.w)}" placeholder="Default"></div><div class="field"><label>Height</label><input class="settings-input" type="number" min="1" max="24" name="responsiveH:${key}" value="${escapeHtml(value.h)}" placeholder="Default"></div></div><div class="field-row"><div class="field"><label>Padding</label><input class="settings-input" type="number" min="0" max="48" name="responsivePadding:${key}" value="${escapeHtml(value.padding)}" placeholder="Default"></div><div class="field"><label>Font scale %</label><input class="settings-input" type="number" min="60" max="160" name="responsiveFontScale:${key}" value="${escapeHtml(value.fontScale)}" placeholder="100"></div></div><label class="checkbox-row"><input type="checkbox" name="responsiveCompact:${key}" ${value.compact?'checked':''}> Compact mode</label><label class="checkbox-row"><input type="checkbox" name="responsiveHidden:${key}" ${value.hidden?'checked':''}> Hide at this breakpoint</label></article>`;}).join('')}</section>`;}
 function responsiveFromForm(data){const result={};for(const key of RESPONSIVE_KEYS)result[key]={enabled:data.get(`responsiveEnabled:${key}`)==='on',hidden:data.get(`responsiveHidden:${key}`)==='on',compact:data.get(`responsiveCompact:${key}`)==='on',w:String(data.get(`responsiveW:${key}`)||''),h:String(data.get(`responsiveH:${key}`)||''),padding:String(data.get(`responsivePadding:${key}`)||''),fontScale:String(data.get(`responsiveFontScale:${key}`)||'')};return normalizeResponsiveSettings(result);}
 function fallbackFromForm(data){return normalizeFallback({mode:data.get('fallbackMode'),text:data.get('fallbackText'),icon:data.get('fallbackIcon'),widgetId:data.get('fallbackWidgetId')});}
-function componentReuseControls(item){const presets=state.config.widgetPresets||[],masters=state.config.widgetMasters||[];return `<section class="settings-section reuse-library"><h3>Presets & linked components</h3><div class="field-row"><div class="field"><label>Preset</label><select class="settings-input" data-widget-preset-select><option value="">Choose preset</option>${presets.map((entry)=>`<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join('')}</select></div><button type="button" class="pill-button" data-action="apply-widget-preset" data-item-id="${escapeHtml(item.id)}">Apply</button><button type="button" class="pill-button" data-action="save-widget-preset" data-item-id="${escapeHtml(item.id)}">Save preset</button></div><div class="field-row"><div class="field"><label>Linked component</label><select class="settings-input" data-widget-master-select><option value="">Not linked</option>${masters.map((entry)=>`<option value="${escapeHtml(entry.id)}" ${item.linkedMasterId===entry.id?'selected':''}>${escapeHtml(entry.name)}</option>`).join('')}</select></div><button type="button" class="pill-button" data-action="link-widget-master" data-item-id="${escapeHtml(item.id)}">Link</button>${item.linkedMasterId?`<button type="button" class="pill-button" data-action="update-widget-master" data-item-id="${escapeHtml(item.id)}">Update master</button><button type="button" class="pill-button" data-action="detach-widget-master" data-item-id="${escapeHtml(item.id)}">Detach</button>`:`<button type="button" class="pill-button" data-action="create-widget-master" data-item-id="${escapeHtml(item.id)}">Create linked component</button>`}</div></section>`;}
+function componentReuseControls(item){const presets=state.config.widgetPresets||[],masters=state.config.widgetMasters||[];return `<section class="settings-section reuse-library"><h3>Presets &amp; linked components</h3><p class="muted">Reuse this widget's configuration, or link widgets so they share one master configuration.</p><div class="field-row reuse-library-row"><div class="field"><label>Preset</label><select class="settings-input" data-widget-preset-select><option value="">Choose preset</option>${presets.map((entry)=>`<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join('')}</select></div><button type="button" class="pill-button" data-action="apply-widget-preset" data-item-id="${escapeHtml(item.id)}">Apply</button><button type="button" class="pill-button" data-action="save-widget-preset" data-item-id="${escapeHtml(item.id)}">Save preset</button></div><div class="field-row reuse-library-row"><div class="field"><label>Linked component</label><select class="settings-input" data-widget-master-select><option value="">Not linked</option>${masters.map((entry)=>`<option value="${escapeHtml(entry.id)}" ${item.linkedMasterId===entry.id?'selected':''}>${escapeHtml(entry.name)}</option>`).join('')}</select></div><button type="button" class="pill-button" data-action="link-widget-master" data-item-id="${escapeHtml(item.id)}">Link</button>${item.linkedMasterId?`<button type="button" class="pill-button" data-action="update-widget-master" data-item-id="${escapeHtml(item.id)}">Update master</button><button type="button" class="pill-button" data-action="detach-widget-master" data-item-id="${escapeHtml(item.id)}">Detach</button>`:`<button type="button" class="pill-button" data-action="create-widget-master" data-item-id="${escapeHtml(item.id)}">Create linked component</button>`}</div></section>`;}
 
 function renderWidgetBehaviorSettings(item) { const settings=item.settings||{}; const actions=normalizeWidgetActions(settings.actions); const conditions=normalizeConditionGroup(settings.conditions); const fallback=normalizeFallback(settings.fallback); return `<section class="settings-section"><h3>Interactions</h3>${widgetActionEditor('tap','Tap',actions.tap)}${widgetActionEditor('double','Double tap',actions.double)}${widgetActionEditor('hold','Hold',actions.hold)}</section><section class="settings-section"><h3>Unavailable behavior</h3><select class="settings-input" name="unavailableBehavior">${[['dim','Dim widget'],['hide','Hide and collapse'],['overlay','Unavailable overlay'],['view_only','View only, block controls']].map(([v,l])=>`<option value="${v}" ${settings.unavailableBehavior===v?'selected':''}>${l}</option>`).join('')}</select></section><section class="settings-section"><div class="settings-section-heading"><div><h3>Visibility conditions</h3><p class="muted">Conditions share one rule engine across all widgets.</p></div><button type="button" class="pill-button" data-action="add-condition-row">${materialSymbol('add',18)} Add</button></div><div class="field"><label>Match</label><select class="settings-input" name="conditionMode"><option value="all" ${conditions.mode!=='any'?'selected':''}>All conditions</option><option value="any" ${conditions.mode==='any'?'selected':''}>Any condition</option></select></div><div data-condition-list>${conditions.rules.map(conditionEditorRow).join('')}</div><div class="field"><label>Transition</label><select class="settings-input" name="visibilityTransition">${[['none','None'],['fade','Fade'],['scale','Scale'],['slide','Slide']].map(([v,l])=>`<option value="${v}" ${settings.visibilityTransition===v?'selected':''}>${l}</option>`).join('')}</select></div></section><section class="settings-section"><div class="settings-section-heading"><div><h3>State styling</h3><p class="muted">Later matching rules override earlier ones.</p></div><button type="button" class="pill-button" data-action="add-state-style-row">${materialSymbol('add',18)} Add</button></div><div data-state-style-list>${normalizeStateStyles(settings.stateStyles).map(stateStyleEditorRow).join('')}</div></section><section class="settings-section"><h3>Fallback content</h3><div class="field"><label>When hidden or unavailable</label><select class="settings-input" name="fallbackMode">${[['none','No fallback'],['hide','Hide completely'],['message','Custom icon and text'],['widget','Show another widget']].map(([v,l])=>`<option value="${v}" ${fallback.mode===v?'selected':''}>${l}</option>`).join('')}</select></div><div class="field"><label>Message</label><input class="settings-input" name="fallbackText" value="${escapeHtml(fallback.text)}"></div>${iconChoiceField('fallbackIcon',fallback.icon,'Fallback icon',{fallback:'cloud_off'})}<div class="field"><label>Fallback widget</label><select class="settings-input" name="fallbackWidgetId">${widgetReferenceOptions(fallback.widgetId,item.id)}</select></div></section>`; }
 function routineActionEditorRow(action,index) { const a=normalizeRoutineAction(action); return `<article class="routine-action-editor" data-routine-action-row data-routine-id="${escapeHtml(a.id)}"><div class="condition-row-head"><strong>Action ${index+1}</strong><button type="button" class="danger" data-action="routine-action-remove">${materialSymbol('delete',17)}</button></div><div class="field-row"><div class="field"><label>Label</label><input class="settings-input" name="routineLabel:${a.id}" value="${escapeHtml(a.label)}"></div>${iconChoiceField(`routineIcon:${a.id}`,a.icon,'Action icon',{fallback:'play_arrow',compact:true})}</div><div class="field"><label>Command</label><select class="settings-input" name="routineCommand:${a.id}"><option value="">Select command</option>${allCommandActions().map((command)=>{const value=encodeCommandAction(command);return `<option value="${escapeHtml(value)}" ${a.commandAction===value?'selected':''}>${escapeHtml(command.label)}</option>`}).join('')}</select></div><label class="checkbox-row"><input type="checkbox" name="routineConfirm:${a.id}" ${a.confirm?'checked':''}> Ask for confirmation</label></article>`; }
@@ -6775,13 +6804,45 @@ function widgetEditorPreviewDimensions(item) {
       live = [...app.querySelectorAll(`[data-item-id="${CSS.escape(sourceId)}"]`)].find((node) => !node.closest('[data-widget-preview]')) || null;
     } catch { live = null; }
   }
-  const rect = live?.getBoundingClientRect?.();
-  if (rect && rect.width >= 40 && rect.height >= 40) return { width: Math.round(rect.width), height: Math.round(rect.height), source:'dashboard' };
+  // offsetWidth/offsetHeight are the widget's layout size in CSS pixels. Unlike
+  // getBoundingClientRect() they are not distorted by kiosk scale-to-fit or
+  // dashboard transition transforms, so the preview lays out exactly like the tile.
+  const width = live?.offsetWidth || 0;
+  const height = live?.offsetHeight || 0;
+  if (width >= 40 && height >= 40) return { width: Math.round(width), height: Math.round(height), source:'dashboard' };
   const type = item?.kind === 'system' ? item.widgetType : item?.entityType || item?.snapshot?.entity_type || 'sensor';
   const defaults = DEFAULT_SIZES[type] || { w:4, h:2 };
   const w = Math.max(1, Number(item?.w) || defaults.w);
   const h = Math.max(1, Number(item?.h) || defaults.h);
-  return { width: Math.round(w * 64 + Math.max(0, w - 1) * 10), height: Math.round(h * 64 + Math.max(0, h - 1) * 10), source:'grid' };
+  // Widgets that are not currently rendered use the real square grid geometry
+  // of the dashboard instead of a fixed 64px legacy cell.
+  const view = dashboardViewState();
+  const shared = state.sharedDashboardGeometry || {};
+  const cell = Number(view?.gridCellSize) || Number(shared.gridCellSize) || 64;
+  const gap = Number(view?.gridCellSize) ? (Number(view.gridGap) || 0) : Number(shared.gridCellSize) ? (Number(shared.gridGap) || 0) : 10;
+  return { width: Math.round(w * cell + Math.max(0, w - 1) * gap), height: Math.round(h * cell + Math.max(0, h - 1) * gap), source:'grid' };
+}
+
+// Scale the editor preview down (never up) so the complete widget is visible in
+// the preview pane. The widget itself keeps its real pixel dimensions, so text,
+// controls and breakpoints render exactly as they do on the dashboard.
+function fitWidgetEditorPreview(form) {
+  const frame = form?.querySelector?.('[data-widget-preview-frame]');
+  const target = frame?.querySelector('[data-widget-preview]');
+  const card = target?.querySelector('.widget-editor-preview-card');
+  if (!frame || !target || !card) return;
+  const frameStyles = getComputedStyle(frame);
+  const availableWidth = frame.clientWidth - (Number.parseFloat(frameStyles.paddingLeft) || 0) - (Number.parseFloat(frameStyles.paddingRight) || 0);
+  const pane = form.querySelector('.widget-editor-preview-pane');
+  const head = pane?.querySelector('.widget-editor-preview-head');
+  const note = pane?.querySelector('.widget-editor-preview-sticky > small');
+  const availableHeight = pane ? pane.clientHeight - (head?.offsetHeight || 0) - (note?.offsetHeight || 0) - 120 : Infinity;
+  const width = card.offsetWidth;
+  const height = card.offsetHeight;
+  if (!width || !height || availableWidth <= 0) return;
+  const scale = Math.max(0.2, Math.min(1, availableWidth / width, availableHeight > 160 ? availableHeight / height : 1));
+  target.style.setProperty('--preview-fit-scale', scale.toFixed(4));
+  frame.dataset.previewScale = String(Math.round(scale * 100));
 }
 
 function renderWidgetEditorPreview(item) {
@@ -6814,6 +6875,7 @@ function updateWidgetEditorPreview(form) {
   initializeMediaSwipers(target);
   initializeWidgetCarousels(target);
   annotateWidgetLayoutPreview(form);
+  fitWidgetEditorPreview(form);
 }
 
 function scheduleWidgetEditorPreview(form) {
@@ -6837,6 +6899,7 @@ function setWidgetEditorStep(form, requested) {
   const frame = form.querySelector('[data-widget-preview-frame]');
   frame?.classList.toggle('layout-editor-active', step === 'layout');
   if (step === 'layout') selectLayoutEditorElement(form, form.dataset.layoutSelectedElement || form.querySelector('[data-layout-editor]')?.dataset.initialLayoutElement || '', { scroll:false });
+  fitWidgetEditorPreview(form);
 }
 
 function renderWidgetSettingsModal() {
@@ -6920,7 +6983,7 @@ function renderWidgetSettingsModal() {
   const layoutEditor = renderWidgetLayoutSettings(item);
   const variants = responsiveEditor(item);
   const advanced = renderWidgetCodeSettings(item);
-  return `<div class="modal-backdrop" data-action="close-modal"></div><section class="modal widget-settings-modal widget-editor-modal" role="dialog" aria-modal="true"><div class="modal-head"><div><div class="eyebrow">CUSTOMIZE</div><h2>${escapeHtml(label)}</h2></div><button class="icon-button" data-action="close-modal">${icon('close')}</button></div><form data-widget-settings-form data-item-id="${escapeHtml(item.id)}" data-editor-step="content"><div class="modal-body widget-editor-modal-body"><div class="widget-editor-layout"><div class="widget-editor-column"><nav class="widget-editor-flow" aria-label="Widget editor steps"><button type="button" class="active" data-action="widget-editor-step" data-widget-editor-step="content"><i>1</i><span>Content</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="behavior"><i>2</i><span>Behavior</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="appearance"><i>3</i><span>Appearance</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="layout"><i>4</i><span>Layout</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="variants"><i>5</i><span>Variants</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="advanced"><i>6</i><span>Advanced</span></button></nav><div class="widget-editor-panels"><section class="widget-editor-panel" data-widget-editor-panel="content">${body}</section><section class="widget-editor-panel" data-widget-editor-panel="behavior" hidden>${behavior}</section><section class="widget-editor-panel" data-widget-editor-panel="appearance" hidden>${appearance}</section><section class="widget-editor-panel" data-widget-editor-panel="layout" hidden>${layoutEditor}</section><section class="widget-editor-panel" data-widget-editor-panel="variants" hidden>${variants}</section><section class="widget-editor-panel" data-widget-editor-panel="advanced" hidden>${advanced}</section></div><div class="widget-editor-step-controls"><button type="button" class="pill-button" data-action="widget-editor-previous" hidden disabled>${materialSymbol('arrow_back',18)} Back</button><button type="button" class="pill-button" data-action="widget-editor-next">Next ${materialSymbol('arrow_forward',18)}</button></div></div><aside class="widget-editor-preview-pane"><div class="widget-editor-preview-sticky"><div class="widget-editor-preview-head"><div><span>LIVE PREVIEW</span><strong>Changes update immediately</strong></div><div class="widget-preview-size-switch"><button type="button" class="active" data-action="widget-preview-size" data-size="standard" title="Standard preview">${materialSymbol('crop_landscape',18)}</button><button type="button" data-action="widget-preview-size" data-size="compact" title="Compact preview">${materialSymbol('crop_portrait',18)}</button><button type="button" data-action="widget-preview-size" data-size="wide" title="Wide preview">${materialSymbol('panorama_wide_angle',18)}</button></div></div><div class="widget-editor-preview-frame size-standard" data-widget-preview-frame><div data-widget-preview>${renderWidgetEditorPreview(structuredClone(item))}</div></div><small>The preview uses current entity data. Commands are disabled in the editor.</small></div></aside></div></div>${componentReuseControls(item)}<div class="modal-actions widget-reuse-actions"><div><button type="button" class="pill-button" data-action="duplicate-widget" data-item-id="${escapeHtml(item.id)}">${materialSymbol('content_copy',17)} Duplicate</button><button type="button" class="pill-button" data-action="copy-widget-style" data-item-id="${escapeHtml(item.id)}">Copy style</button><button type="button" class="pill-button" data-action="copy-widget-actions" data-item-id="${escapeHtml(item.id)}">Copy actions</button><button type="button" class="pill-button" data-action="copy-widget-all" data-item-id="${escapeHtml(item.id)}">Copy all</button>${state.widgetClipboard ? `<button type="button" class="pill-button" data-action="paste-widget-config" data-item-id="${escapeHtml(item.id)}">Paste ${escapeHtml(state.widgetClipboard.mode)}</button>` : ''}</div><button type="button" class="pill-button" data-action="close-modal">Cancel</button><button type="submit" class="pill-button primary" data-save-widget-button>Save widget</button></div></form></section>`;
+  return `<div class="modal-backdrop" data-action="close-modal"></div><section class="modal widget-settings-modal widget-editor-modal" role="dialog" aria-modal="true"><div class="modal-head"><div><div class="eyebrow">CUSTOMIZE</div><h2>${escapeHtml(label)}</h2></div><button class="icon-button" data-action="close-modal">${icon('close')}</button></div><form data-widget-settings-form data-item-id="${escapeHtml(item.id)}" data-editor-step="${escapeHtml(state.modal?.step || 'content')}"><div class="modal-body widget-editor-modal-body"><div class="widget-editor-layout"><div class="widget-editor-column"><nav class="widget-editor-flow" aria-label="Widget editor steps"><button type="button" class="active" data-action="widget-editor-step" data-widget-editor-step="content"><i>1</i><span>Content</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="behavior"><i>2</i><span>Behavior</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="appearance"><i>3</i><span>Appearance</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="layout"><i>4</i><span>Layout</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="variants"><i>5</i><span>Variants</span></button><button type="button" data-action="widget-editor-step" data-widget-editor-step="advanced"><i>6</i><span>Advanced</span></button></nav><div class="widget-editor-panels"><section class="widget-editor-panel" data-widget-editor-panel="content">${body}</section><section class="widget-editor-panel" data-widget-editor-panel="behavior" hidden>${behavior}</section><section class="widget-editor-panel" data-widget-editor-panel="appearance" hidden>${appearance}</section><section class="widget-editor-panel" data-widget-editor-panel="layout" hidden>${layoutEditor}</section><section class="widget-editor-panel" data-widget-editor-panel="variants" hidden>${variants}</section><section class="widget-editor-panel" data-widget-editor-panel="advanced" hidden>${componentReuseControls(item)}${advanced}</section></div><div class="widget-editor-step-controls"><button type="button" class="pill-button" data-action="widget-editor-previous" hidden disabled>${materialSymbol('arrow_back',18)} Back</button><button type="button" class="pill-button" data-action="widget-editor-next">Next ${materialSymbol('arrow_forward',18)}</button></div></div><aside class="widget-editor-preview-pane"><div class="widget-editor-preview-sticky"><div class="widget-editor-preview-head"><div><span>LIVE PREVIEW</span><strong>Changes update immediately</strong></div><div class="widget-preview-size-switch"><button type="button" class="active" data-action="widget-preview-size" data-size="standard" title="Standard preview">${materialSymbol('crop_landscape',18)}</button><button type="button" data-action="widget-preview-size" data-size="compact" title="Compact preview">${materialSymbol('crop_portrait',18)}</button><button type="button" data-action="widget-preview-size" data-size="wide" title="Wide preview">${materialSymbol('panorama_wide_angle',18)}</button></div></div><div class="widget-editor-preview-frame size-standard" data-widget-preview-frame><div data-widget-preview>${renderWidgetEditorPreview(structuredClone(item))}</div></div><small>The preview uses current entity data. Commands are disabled in the editor.</small></div></aside></div></div><div class="modal-actions widget-reuse-actions"><div><button type="button" class="pill-button" data-action="duplicate-widget" data-item-id="${escapeHtml(item.id)}">${materialSymbol('content_copy',17)} Duplicate</button><button type="button" class="pill-button" data-action="copy-widget-style" data-item-id="${escapeHtml(item.id)}">Copy style</button><button type="button" class="pill-button" data-action="copy-widget-actions" data-item-id="${escapeHtml(item.id)}">Copy actions</button><button type="button" class="pill-button" data-action="copy-widget-all" data-item-id="${escapeHtml(item.id)}">Copy all</button>${state.widgetClipboard ? `<button type="button" class="pill-button" data-action="paste-widget-config" data-item-id="${escapeHtml(item.id)}">Paste ${escapeHtml(state.widgetClipboard.mode)}</button>` : ''}</div><button type="button" class="pill-button" data-action="close-modal">Cancel</button><button type="submit" class="pill-button primary" data-save-widget-button>Save widget</button></div></form></section>`;
 }
 
 function updateMarquees(root = document) {
@@ -7765,7 +7828,7 @@ function handleActionClick(event, explicitActionNode = null) {
   else if (action === 'open-dashboard-unlock') { const dashboardId = actionNode.dataset.dashboardId || currentDashboard()?.id; state.modal = { type: 'page-pin', dashboardId }; renderModalRoot(); }
   else if (action === 'relock-current-dashboard') { const dashboard = currentDashboard(); if (dashboard?.pinHash) { markDashboardLocked(dashboard); state.modal = null; toast(`${localName(dashboard.name)} locked`); render(); } }
   else if (action === 'open-page-menu') { state.modal = { type: 'page-menu' }; renderModalRoot(); }
-  else if (action === 'close-modal') { if (state.modal?.type === 'settings') { state.backupImportCandidate = null; state.backupImportBusy = false; } state.modal = null; renderModalRoot(); }
+  else if (action === 'close-modal') { if (state.modal?.type === 'settings') { state.backupImportCandidate = null; state.backupImportBusy = false; } state.modal = state.modal?.returnModal || null; renderModalRoot(); }
   else if (action === 'request-screensaver-wake') { requestScreensaverWake(); }
   else if (action === 'cancel-screensaver-unlock') { state.screensaverUnlockPrompt = false; render(); }
   else if (action === 'toggle-screensaver-widget-fullscreen') { state.screensaverWidgetFullscreen = !state.screensaverWidgetFullscreen; state.lastActivityAt = Date.now(); render(); }
@@ -7801,7 +7864,7 @@ function handleActionClick(event, explicitActionNode = null) {
   else if (action === 'flow-editor-previous' || action === 'flow-editor-next') { const form = actionNode.closest('form'); const steps = flowEditorSteps(form); const current = Math.max(0, steps.indexOf(form?.dataset.editorStep || steps[0])); setFlowEditorStep(form, steps[Math.max(0, Math.min(steps.length - 1, current + (action === 'flow-editor-next' ? 1 : -1)))]); }
   else if (action === 'widget-editor-step') { setWidgetEditorStep(actionNode.closest('form'), actionNode.dataset.widgetEditorStep); }
   else if (action === 'widget-editor-previous' || action === 'widget-editor-next') { const form = actionNode.closest('form'); const steps = ['content','behavior','appearance','layout','variants','advanced']; const current = Math.max(0, steps.indexOf(form?.dataset.editorStep || 'content')); setWidgetEditorStep(form, steps[Math.max(0, Math.min(steps.length - 1, current + (action === 'widget-editor-next' ? 1 : -1)))]); }
-  else if (action === 'widget-preview-size') { const form = actionNode.closest('form'); const frame = form?.querySelector('[data-widget-preview-frame]'); if (frame) { frame.className = `widget-editor-preview-frame size-${actionNode.dataset.size || 'standard'}`; form.querySelectorAll('[data-action="widget-preview-size"]').forEach((button) => button.classList.toggle('active', button === actionNode)); } }
+  else if (action === 'widget-preview-size') { const form = actionNode.closest('form'); const frame = form?.querySelector('[data-widget-preview-frame]'); if (frame) { const size = ['standard','compact','wide'].includes(actionNode.dataset.size) ? actionNode.dataset.size : 'standard'; frame.classList.remove('size-standard','size-compact','size-wide'); frame.classList.add(`size-${size}`); form.querySelectorAll('[data-action="widget-preview-size"]').forEach((button) => button.classList.toggle('active', button === actionNode)); fitWidgetEditorPreview(form); } }
   else if (action === 'tab-editor-add') {
     const list = actionNode.closest('form')?.querySelector('[data-tab-editor-list]');
     if (list && list.children.length < 16) { const id = uid('tab'); list.insertAdjacentHTML('beforeend', tabEditorRow({ id, name: `Tab ${list.children.length + 1}`, icon: 'tab', color: '#d0d0d0', columns: 1, showIcon: true, showLabel: true }, list.children.length, list.children.length + 1)); syncTabEditor(actionNode.closest('form')); }
@@ -7838,9 +7901,9 @@ function handleActionClick(event, explicitActionNode = null) {
   else if (action === 'copy-widget-actions') copyWidgetConfiguration(actionNode.dataset.itemId,'actions');
   else if (action === 'copy-widget-all') copyWidgetConfiguration(actionNode.dataset.itemId,'all');
   else if (action === 'paste-widget-config') pasteWidgetConfiguration(actionNode.dataset.itemId);
-  else if (action === 'save-widget-preset') { state.modal={type:'prompt',purpose:'save-widget-preset',itemId:actionNode.dataset.itemId,title:'Save widget preset',label:'Preset name',value:widgetEditorLabel(findDashboardItem(actionNode.dataset.itemId).item)}; renderModalRoot(); }
+  else if (action === 'save-widget-preset') { state.modal={type:'prompt',purpose:'save-widget-preset',itemId:actionNode.dataset.itemId,title:'Save widget preset',label:'Preset name',value:widgetEditorLabel(findDashboardItem(actionNode.dataset.itemId).item),returnModal:widgetEditorReturnModal(actionNode)}; renderModalRoot(); }
   else if (action === 'apply-widget-preset') { const select=actionNode.closest('.reuse-library')?.querySelector('[data-widget-preset-select]'); if(select?.value)applyWidgetPreset(actionNode.dataset.itemId,select.value); }
-  else if (action === 'create-widget-master') { state.modal={type:'prompt',purpose:'create-widget-master',itemId:actionNode.dataset.itemId,title:'Create linked component',label:'Component name',value:widgetEditorLabel(findDashboardItem(actionNode.dataset.itemId).item)}; renderModalRoot(); }
+  else if (action === 'create-widget-master') { state.modal={type:'prompt',purpose:'create-widget-master',itemId:actionNode.dataset.itemId,title:'Create linked component',label:'Component name',value:widgetEditorLabel(findDashboardItem(actionNode.dataset.itemId).item),returnModal:widgetEditorReturnModal(actionNode)}; renderModalRoot(); }
   else if (action === 'link-widget-master') { const select=actionNode.closest('.reuse-library')?.querySelector('[data-widget-master-select]'); if(select?.value)linkWidgetMaster(actionNode.dataset.itemId,select.value); }
   else if (action === 'update-widget-master') updateWidgetMaster(actionNode.dataset.itemId);
   else if (action === 'detach-widget-master') detachWidgetMaster(actionNode.dataset.itemId);
@@ -8461,6 +8524,7 @@ modalRoot.addEventListener('submit', async (event) => {
   if (event.target.matches('[data-prompt-form]')) {
     const value = String(new FormData(event.target).get('value') || '').trim();
     if (!value) return;
+    const returnModal = state.modal.returnModal || null;
     if (state.modal.purpose === 'add-dashboard') {
       const dashboard = { id: uid('dashboard'), name: value, navIcon: 'dashboard', navColor: '#d0d0d0', background: { preset: 'black', ...DASHBOARD_BACKGROUND_PRESETS.black }, items: [] };
       state.config.dashboards.push(dashboard);
@@ -8469,9 +8533,9 @@ modalRoot.addEventListener('submit', async (event) => {
     } else if (state.modal.purpose === 'rename-dashboard') currentDashboard().name = value;
     else if (state.modal.purpose === 'save-widget-preset') saveWidgetPreset(state.modal.itemId,value);
     else if (state.modal.purpose === 'create-widget-master') createWidgetMaster(state.modal.itemId,value);
-    state.modal = null;
+    state.modal = returnModal;
     persistConfig();
-    render();
+    render(returnModal ? { preserveModal:false } : {});
   }
 
 
@@ -8692,9 +8756,24 @@ window.addEventListener('resize', () => {
     const columns = getColumns();
     if (columns !== state.lastColumns) render({ preserveModal: true });
     else { syncDashboardGridGeometry(app); applyWidgetElementLayouts(app); applyKioskScale(); app.querySelectorAll('swiper-container[data-widget-carousel]').forEach(scheduleWidgetCarouselGeometry); }
+    fitWidgetEditorPreview(document.querySelector('[data-widget-settings-form]'));
   }, 120);
 });
 window.addEventListener('keydown', () => registerUserActivity());
+// Escape closes the top-most layer (icon library, dialog, drawer, pending placement),
+// matching what the close buttons do. Kiosk mode keeps its own locked-down behaviour.
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || event.defaultPrevented || state.kioskMode) return;
+  const libraryClose = document.querySelector('[data-unfolded-tools-action="close"]');
+  if (libraryClose) { event.preventDefault(); libraryClose.click(); return; }
+  if (state.modal) {
+    const closer = modalRoot.querySelector('.modal-head [data-action="close-modal"]') || modalRoot.querySelector('[data-action="close-modal"]');
+    if (closer) { event.preventDefault(); closer.click(); }
+    return;
+  }
+  if (state.drawerOpen) { event.preventDefault(); state.drawerOpen = false; syncDrawer(); return; }
+  if (state.pendingWidgetPlacement) { event.preventDefault(); cancelWidgetPlacement(); }
+});
 window.addEventListener('wheel', () => registerUserActivity({ wake: false }), { passive: true });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) registerUserActivity(); });
 window.addEventListener('beforeunload', () => { for (const timer of state.dashboardRelockTimers.values()) clearTimeout(timer); clearTimeout(state.screensaverTimer); clearTimeout(state.screensaverExitTimer); clearTimeout(state.screensaverTriggerTimer); cleanupCustomWidgetScripts(); state.eventSource?.close(); });

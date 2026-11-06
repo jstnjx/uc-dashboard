@@ -5727,9 +5727,10 @@ input, textarea, [contenteditable="true"] {
   .remote-segmented button { flex:0 0 auto; }
 }
 
-/* v1.7 settings stability and four-step row layout. */
+/* Settings has nine steps: a 3 x 3 grid keeps every label readable (four columns truncated
+   "Screensaver" and "Notifications" and left a single orphaned "Backup" row). */
 .settings-flow-modal.main-settings-flow .widget-editor-flow {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .settings-flow-modal.main-settings-flow .widget-editor-flow button {
   min-width: 0;
@@ -5904,15 +5905,14 @@ input, textarea, [contenteditable="true"] {
 
 /* Keep the timer face geometrically circular in both the live widget and layout preview. */
 .timer-progress {
-  width: min(58cqw,180px) !important;
-  height: min(58cqw,180px) !important;
+  width: min(58cqw,44cqh,180px) !important;
+  height: min(58cqw,44cqh,180px) !important;
   min-width: 84px !important;
   min-height: 84px !important;
   aspect-ratio: 1 / 1 !important;
   flex: 0 0 auto !important;
   border-radius: 50% !important;
 }
-.widget-editor-preview-card .timer-progress { width:min(46cqw,168px)!important; height:min(46cqw,168px)!important; }
 
 /* Toasts occupy the safe area immediately left of the floating Remote menu trigger. */
 .toast-region { right:100px; bottom:22px; left:auto; max-width:min(440px,calc(100vw - 122px)); }
@@ -6430,4 +6430,97 @@ body.editing .remote-entity-grid {
   .unfolded-tools-icon-card > span { min-height:70px; }
   .unfolded-tools-library-dialog > footer span { display:none; }
   .reusable-icon-choice-row { flex-wrap:wrap; }
+}
+
+/* v1.12.4 editor fixes ---------------------------------------------------------
+   1. Paired fields (.field-row) never had a base layout, so every "Width / Height",
+      "Minimum / Maximum" pair stacked without spacing. Narrow screens already
+      collapse them to one column via the 599px media query above.               */
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+@media (max-width: 599px) { .field-row { grid-template-columns: minmax(0, 1fr); } }
+.field-row.entity-grid-placement-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 760px) { .field-row.entity-grid-placement-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.reuse-library { margin: 0; }
+.widget-settings-modal.widget-editor-modal .reuse-library { margin: 0; padding-top: 0; }
+.reuse-library .reuse-library-row { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
+.reuse-library .reuse-library-row > .pill-button { align-self: end; height: 52px; margin: 0; white-space: nowrap; }
+@media (max-width: 599px) {
+  .reuse-library .reuse-library-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reuse-library .reuse-library-row > .field { grid-column: 1 / -1; }
+}
+
+/* 2. The widget editor is a fixed-height dialog on desktop: header, the two-pane
+      editor, and the action bar. Nothing lives below the panes any more, so no
+      section can be hidden behind the sticky action bar.                        */
+.widget-settings-modal.widget-editor-modal > form {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.widget-settings-modal.widget-editor-modal .widget-editor-modal-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.widget-settings-modal.widget-editor-modal .widget-editor-layout { flex: 1 1 auto; }
+.widget-settings-modal.widget-editor-modal .widget-reuse-actions { position: static; flex: 0 0 auto; }
+.widget-settings-modal.widget-editor-modal .widget-reuse-actions > div { flex: 1 1 auto; }
+@media (max-width: 980px) {
+  /* Single-column editor: the body is the one scroll area, the action bar stays put. */
+  .widget-settings-modal.widget-editor-modal .widget-editor-modal-body { display: block; overflow-x: hidden; overflow-y: auto; }
+}
+@media (max-width: 599px) {
+  .widget-settings-modal.widget-editor-modal .widget-reuse-actions { flex-wrap: wrap; gap: 8px; }
+  .widget-settings-modal.widget-editor-modal .widget-reuse-actions > div { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .widget-settings-modal.widget-editor-modal .widget-reuse-actions > div > .pill-button { flex: 0 0 auto; }
+  .widget-settings-modal.widget-editor-modal .widget-reuse-actions > .pill-button { flex: 1 1 0; }
+}
+
+/* 3. The live preview keeps the widget's real pixel size (same layout, same
+      breakpoints as the dashboard tile) and is scaled down as a whole to fit the
+      preview pane instead of being cropped at the pane edge.                    */
+.widget-editor-preview-frame { min-width: 0; }
+.widget-editor-preview-frame > [data-widget-preview] {
+  --preview-fit-scale: 1;
+  width: 100%;
+  min-width: 0;
+}
+.widget-editor-preview-frame .widget-editor-preview-card {
+  --preview-card-spacing: 120px;
+  transform: scale(var(--preview-fit-scale));
+  transform-origin: 0 0;
+  margin: 0 calc(var(--widget-preview-width,320px) * var(--preview-width-scale) * (var(--preview-fit-scale) - 1)) calc(var(--widget-preview-height,220px) * var(--preview-height-scale) * (var(--preview-fit-scale) - 1) + var(--preview-card-spacing)) 0;
+}
+.widget-editor-preview-frame.layout-editor-active .widget-editor-preview-card { --preview-card-spacing: 180px; margin-bottom: calc(var(--widget-preview-height,220px) * var(--preview-height-scale) * (var(--preview-fit-scale) - 1) + var(--preview-card-spacing)); }
+
+/* Toasts wrap inside the region instead of running off the right screen edge. */
+.toast-region { grid-template-columns: minmax(0, 1fr); justify-items: end; }
+.toast { overflow-wrap: anywhere; }
+/* With the preview scaled to fit, the extra scroll room below it is no longer needed. */
+.widget-editor-preview-frame,
+.widget-editor-preview-frame.size-wide,
+.widget-editor-preview-frame.layout-editor-active { padding-bottom: 20px; }
+.widget-editor-preview-frame .widget-editor-preview-card,
+.widget-editor-preview-frame.layout-editor-active .widget-editor-preview-card { --preview-card-spacing: 0px; }
+
+/* Status-bar editor preview: narrow columns truncate instead of overlapping neighbours. */
+.preview-status-cell { display: flex; min-width: 0; align-items: center; justify-content: center; gap: 4px; overflow: hidden; white-space: nowrap; }
+.preview-status-cell > span:not(.uc-icon) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.preview-status-cell > .uc-icon { flex: 0 0 auto; }
+.preview-status-cell.type-alerts, .preview-status-cell.type-profile { overflow: visible; }
+.field-row.statusbar-grid-controls { align-items: start; }
+/* While a dialog is open, toasts move to the top edge so they never cover its action bar
+   (Save / Cancel buttons sit at the bottom-right exactly where toasts used to appear). */
+#modal-root:not(:empty) ~ #toast-region { top: 18px; bottom: auto; }
+
+/* Phone bottom-sheet dialogs drop the centring transform, so they must also drop
+   left:50% — otherwise every dialog was pushed half off the right screen edge. */
+@media (max-width: 680px) {
+  .modal { right: 0; left: 0; margin-inline: auto; }
 }

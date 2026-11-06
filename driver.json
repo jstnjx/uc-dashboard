@@ -1,6 +1,6 @@
 {
   "driver_id": "uc_dashboard",
-  "version": "1.12.3",
+  "version": "1.12.4",
   "min_core_api": "0.20.1",
   "name": {
     "en": "UC Dashboard"

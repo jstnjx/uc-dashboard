@@ -61,8 +61,8 @@
           "entityDisplay": "name_state"
         },
         {
-          "id": "status-wifi",
-          "type": "wifi",
+          "id": "status-battery",
+          "type": "battery_indicator",
           "customText": "",
           "entityId": "",
           "entityDisplay": "name_state"
